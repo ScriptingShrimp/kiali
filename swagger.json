@@ -15,7 +15,8 @@
     "title": "Kiali",
     "version": "_"
   },
-  "basePath": "kiali-istio-system.apps.ocp4-kqe-auto1.maistra.upshift.redhat.com/api",
+  "host": "kiali-istio-system.apps.ocp4-kqe-auto1.maistra.upshift.redhat.com",
+  "basePath": "/api",
   "paths": {
     "/": {
       "get": {
