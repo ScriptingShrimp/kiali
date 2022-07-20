@@ -18,7 +18,7 @@ Feature: Kiali Apps List page
     And user sees Details information for Apps
   
   @apps-page
-  Scenario: Filter Apps by Istio Name
+  Scenario: Filter Apps by Istio Name 
     When the user filters by "App Name" for "productpage"
     Then user only sees "productpage"
   
