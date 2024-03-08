@@ -166,6 +166,8 @@ if [ "${DELETE_DEMOS}" != "true" ]; then
     "${SCRIPT_DIR}/install-bookinfo-demo.sh" -tg -in ${ISTIO_NAMESPACE} -a ${ARCH}
     echo "Deploying error rates demo ..."
     "${SCRIPT_DIR}/install-error-rates-demo.sh" -in ${ISTIO_NAMESPACE} -a ${ARCH}
+    echo "Deploying sleep demo ..."
+    "${SCRIPT_DIR}/install-sleep-demo.sh" -in ${ISTIO_NAMESPACE} -a ${ARCH}
 
   else
     echo "Deploying bookinfo demo..."
@@ -173,6 +175,9 @@ if [ "${DELETE_DEMOS}" != "true" ]; then
 
     echo "Deploying error rates demo..."
     "${SCRIPT_DIR}/install-error-rates-demo.sh" -c kubectl -in ${ISTIO_NAMESPACE} -a ${ARCH}
+
+    echo "Deploying sleep demo ..."
+    "${SCRIPT_DIR}/install-sleep-demo.sh" -c kubectl -in ${ISTIO_NAMESPACE} -a ${ARCH}
   fi
 
   echo "Installing the 'sleep' app in the 'sleep' namespace..."
