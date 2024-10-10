@@ -10,5 +10,5 @@ Feature: Test ocp different
     And user is at the "services" list page
 
   Scenario: See services table after kiali is restarted
-    Given restart kiali
-    And user is at the "services" list page
+    When restart kiali
+    Then user is at the "services" list page
