@@ -134,7 +134,7 @@ Cypress.Commands.add('login', (username: string, password: string) => {
         cy.wait('@getNamespaces');
         cy.wait('@getConfig');
         cy.wait('@getStatus');
-        cy.wait('@getTracing');
+        // cy.wait('@getTracing');
         cy.wait('@getAuthInfo');
       } else if (auth_strategy === 'openid') {
         // Only works with keycloak at the moment.
