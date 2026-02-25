@@ -80,6 +80,23 @@ func (p *GoogleAIProvider) SendChat(r *http.Request, req types.AIRequest, busine
 			if len(result.Citations) > 0 {
 				response.Citations = append(response.Citations, result.Citations...)
 			}
+			// For get_logs with analyze=false, return logs directly without AI analysis
+			if result.Message.Name == "get_logs" && result.Message.Content != "" {
+				// Check if analyze parameter is false (default)
+				analyze := false
+				if result.Message.Param != nil {
+					if params, ok := result.Message.Param.(map[string]interface{}); ok {
+						if analyzeVal, ok := params["analyze"].(bool); ok {
+							analyze = analyzeVal
+						}
+					}
+				}
+				if !analyze {
+					// Return logs directly without model analysis
+					response.Answer = providers.ParseMarkdownResponse(result.Message.Content)
+					continue
+				}
+			}
 			if result.Message.Content != "" {
 				conversation = append(conversation, types.ConversationMessage{
 					Content: result.Message.Content,
@@ -91,6 +108,14 @@ func (p *GoogleAIProvider) SendChat(r *http.Request, req types.AIRequest, busine
 		if err := ctx.Err(); err != nil {
 			return providers.NewContextCanceledResponse(err)
 		}
+
+		// If get_logs with analyze=false already set the answer, return it directly
+		if response.Answer != "" {
+			providers.StoreConversation(p, ctx, aiStore, ptr, sessionID, req, conversation)
+			log.Debugf("[Chat AI] Response for conversation ID: %s: %+v", req.ConversationID, response)
+			return response, http.StatusOK
+		}
+
 		shouldGenerate, responseAnswer := providers.ShouldGenerateAnswer(response, toolNames)
 		if shouldGenerate {
 			result, err = p.client.Models.GenerateContent(ctx, p.model, p.ConversationToProvider(conversation).([]*genai.Content), &genai.GenerateContentConfig{})

@@ -69,6 +69,11 @@ When the user asks about troubleshooting, docs, or concepts:
 1. **ALWAYS call the get_citations tool**.
 2. The system will automatically handle including these citations. You do NOT need to include a "citations" field in your response.
 
+### LOGS RETRIEVAL LOGIC (CRITICAL)
+When the user asks about pod or workload logs, call get_logs and set the analyze parameter:
+- Set **analyze: true** if the user's query contains words like: "analyze", "what's wrong", "investigate", "debug", "understand", "explain", "why", "errors in", "problems in"
+- Set **analyze: false** (or omit) if the user says: "show", "get", "display", "tail", "view" (just wants to see the logs)
+
 ### ANALYSIS LOGIC
 1. **Check Context**: Use page_namespaces/page_url to orient yourself.
 2. **Tool Execution**:
