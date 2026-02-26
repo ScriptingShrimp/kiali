@@ -1,5 +1,4 @@
 @overview
-@selected
 Feature: New Overview - Overview cards
 
   Background:
