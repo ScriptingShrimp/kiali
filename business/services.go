@@ -138,7 +138,6 @@ func (in *SvcService) GetServiceListForCluster(ctx context.Context, criteria Ser
 func (in *SvcService) getServiceListForCluster(ctx context.Context, criteria ServiceCriteria, cluster string) (*models.ServiceList, error) {
 	var (
 		svcs            []core_v1.Service
-		rSvcs           []*kubernetes.RegistryService
 		pods            []core_v1.Pod
 		deployments     []apps_v1.Deployment
 		istioConfigList models.IstioConfigList
@@ -166,15 +165,6 @@ func (in *SvcService) getServiceListForCluster(ctx context.Context, criteria Ser
 	}
 	svcs = kubernetes.FilterServicesBySelector(svcList.Items, selectorLabels)
 
-	if in.conf.ExternalServices.Istio.IstioAPIEnabled && cluster == in.conf.KubernetesConfig.ClusterName {
-		registryCriteria := RegistryCriteria{
-			Namespace:       criteria.Namespace,
-			ServiceSelector: criteria.ServiceSelector,
-			Cluster:         cluster,
-		}
-		rSvcs = in.businessLayer.RegistryStatus.GetRegistryServices(registryCriteria)
-	}
-
 	if !criteria.IncludeOnlyDefinitions {
 		podList := &core_v1.PodList{}
 		if err := kubeCache.List(ctx, podList, client.InNamespace(criteria.Namespace)); err != nil {
@@ -191,30 +181,31 @@ func (in *SvcService) getServiceListForCluster(ctx context.Context, criteria Ser
 		deployments = depList.Items
 	}
 
-	// Cross-namespace query of all Istio Resources to find references
-	// References MAY have visibility for a user but not access if they are not allowed to access to the namespace
-	if criteria.IncludeIstioResources {
-		istioCriteria := IstioConfigCriteria{
-			IncludeDestinationRules:   true,
-			IncludeGateways:           true,
-			IncludeK8sGateways:        true,
-			IncludeK8sGRPCRoutes:      true,
-			IncludeK8sHTTPRoutes:      true,
-			IncludeK8sInferencePools:  true,
-			IncludeK8sReferenceGrants: true,
-			IncludeServiceEntries:     true,
-			IncludeVirtualServices:    true,
-		}
-		istioConfigs, err := in.businessLayer.IstioConfig.GetIstioConfigList(ctx, cluster, istioCriteria)
-		if err != nil {
-			log.Errorf("Error fetching IstioConfigList per cluster [%s] per namespace [%s]: %s", cluster, criteria.Namespace, err)
-			return nil, err
-		}
-		istioConfigList = *istioConfigs
+	// ServiceEntries are always fetched because buildServiceEntryOverviews needs
+	// them to produce SE-backed services (replacing the old Istio Service Registry).
+	// The remaining Istio resources are only needed for building references/badges.
+	istioCriteria := IstioConfigCriteria{
+		IncludeServiceEntries: true,
 	}
+	if criteria.IncludeIstioResources {
+		istioCriteria.IncludeDestinationRules = true
+		istioCriteria.IncludeGateways = true
+		istioCriteria.IncludeK8sGateways = true
+		istioCriteria.IncludeK8sGRPCRoutes = true
+		istioCriteria.IncludeK8sHTTPRoutes = true
+		istioCriteria.IncludeK8sInferencePools = true
+		istioCriteria.IncludeK8sReferenceGrants = true
+		istioCriteria.IncludeVirtualServices = true
+	}
+	istioConfigs, err := in.businessLayer.IstioConfig.GetIstioConfigList(ctx, cluster, istioCriteria)
+	if err != nil {
+		log.Errorf("Error fetching IstioConfigList per cluster [%s] per namespace [%s]: %s", cluster, criteria.Namespace, err)
+		return nil, err
+	}
+	istioConfigList = *istioConfigs
 
 	// Convert to Kiali model
-	services := in.buildServiceList(cluster, criteria.Namespace, svcs, rSvcs, pods, deployments, istioConfigList, criteria)
+	services := in.buildServiceList(cluster, criteria.Namespace, svcs, pods, deployments, istioConfigList, criteria)
 
 	// Check if we need to add health
 
@@ -266,7 +257,7 @@ func getDRKialiScenario(dr []*networking_v1.DestinationRule) string {
 	return scenario
 }
 
-func (in *SvcService) buildServiceList(cluster string, namespace string, svcs []core_v1.Service, rSvcs []*kubernetes.RegistryService, pods []core_v1.Pod, deployments []apps_v1.Deployment, istioConfigList models.IstioConfigList, criteria ServiceCriteria) *models.ServiceList {
+func (in *SvcService) buildServiceList(cluster string, namespace string, svcs []core_v1.Service, pods []core_v1.Pod, deployments []apps_v1.Deployment, istioConfigList models.IstioConfigList, criteria ServiceCriteria) *models.ServiceList {
 	services := []models.ServiceOverview{}
 	validations := models.IstioValidations{}
 	if !criteria.IncludeOnlyDefinitions {
@@ -275,17 +266,13 @@ func (in *SvcService) buildServiceList(cluster string, namespace string, svcs []
 
 	kubernetesServices := in.buildKubernetesServices(svcs, pods, istioConfigList, criteria.IncludeOnlyDefinitions, cluster)
 	services = append(services, kubernetesServices...)
-	// Add cluster to each kube service
 	for i := range services {
 		services[i].Cluster = cluster
 	}
 
-	// Add Istio Registry Services that are not present in the Kubernetes list
-	// TODO: Registry services are not associated to a cluster. They can have multiple clusters under
-	// "clusterVIPs". We need to decide how to handle this.
-	rSvcs = kubernetes.FilterRegistryServicesByServices(rSvcs, svcs)
-	registryServices := in.buildRegistryServices(rSvcs, istioConfigList, cluster)
-	services = append(services, registryServices...)
+	// Add ServiceEntry-backed services that have no corresponding K8s Service
+	seServices := in.buildServiceEntryOverviews(istioConfigList.ServiceEntries, svcs, namespace, istioConfigList, cluster)
+	services = append(services, seServices...)
 	return &models.ServiceList{Namespace: namespace, Services: services, Validations: validations}
 }
 
@@ -376,101 +363,89 @@ func (in *SvcService) buildKubernetesServices(svcs []core_v1.Service, pods []cor
 	return services
 }
 
-func filterIstioServiceByClusterId(clusterId string, item *kubernetes.RegistryService) bool {
-	if clusterId == "Kubernetes" {
-		return true
-	}
-	// External and Federation services are always local to the control plane
-	if item.Attributes.ServiceRegistry != "Kubernetes" {
-		return true
-	}
-	if _, ok := item.ClusterVIPs12.Addresses[clusterId]; ok {
-		return true
-	}
-	if _, ok := item.ClusterVIPs11[clusterId]; ok {
-		return true
-	}
-	return false
-}
-
-func (in *SvcService) buildRegistryServices(rSvcs []*kubernetes.RegistryService, istioConfigList models.IstioConfigList, cluster string) []models.ServiceOverview {
+// buildServiceEntryOverviews converts ServiceEntry resources into ServiceOverview entries
+// for the service list. Only SE hosts in the target namespace that don't overlap with an
+// existing K8s Service (by name) are included.
+//
+// This replaces the old buildRegistryServices which consumed Istio's /debug/registryz
+// endpoint. Because the Istio registry is no longer available, some fields are less rich:
+//   - AppLabel is always false: the registry carried resolved label selectors that let us
+//     check for an "app" label; ServiceEntry resources have no selector concept.
+//   - Selector is always empty for the same reason.
+//   - Labels come from the ServiceEntry object metadata rather than from Istio's internal
+//     resolved view, so they may differ from what the registry previously reported.
+func (in *SvcService) buildServiceEntryOverviews(serviceEntries []*networking_v1.ServiceEntry, existingServices []core_v1.Service, namespace string, istioConfigList models.IstioConfigList, cluster string) []models.ServiceOverview {
 	services := []models.ServiceOverview{}
-	conf := in.conf
-
-	// The istiod registry doesn't have a explicit flag when a service is deployed in a different control plane.
-	// The only way to identify it is to check that the service has an address in the current cluster.
-	// To avoid side effects, Kiali will process only services that belongs to the current cluster.
-	// This should be revisited on more multi-cluster deployments scenarios.
-	//
-	//	{
-	//		"hostname": "test-svc.evil.svc.cluster.local",
-	//		"clusterVIPs": {
-	//			"Addresses": {
-	//				"istio-west": [
-	//					"0.0.0.0"
-	//				]
-	//			}
-	//	}
-	// By default Istio uses "Kubernetes" as clusterId for single control planes scenarios.
-	// This clusterId is propagated into the Istio Registry and we need it to filter services in multi-cluster scenarios.
-	// I.e.:
-	//    "clusterVIPs": {
-	//      "Addresses": {
-	//        "Kubernetes": [
-	//          "10.217.4.189"
-	//        ]
-	//      }
-	//    }
-	clusterId := conf.KubernetesConfig.ClusterName
-	for _, item := range rSvcs {
-		if !filterIstioServiceByClusterId(clusterId, item) {
+	existingSet := make(map[string]struct{}, len(existingServices))
+	clusterNamespaces := make([]string, 0, len(existingServices))
+	clusterNamespaceSet := make(map[string]struct{}, len(existingServices))
+	for _, svc := range existingServices {
+		if namespace != "" && svc.Namespace != namespace {
 			continue
 		}
+		existingSet[fmt.Sprintf("%s/%s", svc.Namespace, svc.Name)] = struct{}{}
+		if _, found := clusterNamespaceSet[svc.Namespace]; !found {
+			clusterNamespaceSet[svc.Namespace] = struct{}{}
+			clusterNamespaces = append(clusterNamespaces, svc.Namespace)
+		}
+	}
 
-		_, appLabelFound := conf.GetAppLabelName(item.Attributes.LabelSelectors)
+	addedHosts := make(map[string]struct{})
+	for _, se := range serviceEntries {
+		if namespace != "" && se.Namespace != namespace {
+			continue
+		}
+		for _, hostname := range se.Spec.Hosts {
+			host := kubernetes.GetHost(hostname, se.Namespace, clusterNamespaces, in.conf)
+			dedupServiceName, dedupNamespace := kubernetes.ParseTwoPartHost(host)
+			if dedupNamespace != "" && dedupServiceName != "" {
+				if _, exists := existingSet[fmt.Sprintf("%s/%s", dedupNamespace, dedupServiceName)]; exists {
+					continue
+				}
+			}
 
-		// ServiceEntry/External and Federation will be marked as hasSidecar == true as they will have telemetry
-		hasSidecar := true
-		if item.Attributes.ServiceRegistry != "External" && item.Attributes.ServiceRegistry != "Federation" {
-			hasSidecar = false
+			addedHostKey := fmt.Sprintf("%s/%s", se.Namespace, hostname)
+			if _, alreadyAdded := addedHosts[addedHostKey]; alreadyAdded {
+				continue
+			}
+			addedHosts[addedHostKey] = struct{}{}
+
+			svcServiceEntries := kubernetes.FilterServiceEntriesByHostname(istioConfigList.ServiceEntries, hostname)
+			svcDestinationRules := kubernetes.FilterDestinationRulesByHostname(istioConfigList.DestinationRules, hostname)
+			svcVirtualServices := kubernetes.FilterVirtualServicesByHostname(istioConfigList.VirtualServices, hostname)
+			svcGateways := kubernetes.FilterGatewaysByVirtualServices(istioConfigList.Gateways, svcVirtualServices)
+
+			svcReferences := make([]*models.IstioValidationKey, 0)
+			for _, ref := range svcServiceEntries {
+				key := models.BuildKey(kubernetes.ServiceEntries, ref.Name, ref.Namespace, cluster)
+				svcReferences = append(svcReferences, &key)
+			}
+			for _, ref := range svcVirtualServices {
+				key := models.BuildKey(kubernetes.VirtualServices, ref.Name, ref.Namespace, cluster)
+				svcReferences = append(svcReferences, &key)
+			}
+			for _, ref := range svcDestinationRules {
+				key := models.BuildKey(kubernetes.DestinationRules, ref.Name, ref.Namespace, cluster)
+				svcReferences = append(svcReferences, &key)
+			}
+			for _, ref := range svcGateways {
+				key := models.BuildKey(kubernetes.Gateways, ref.Name, ref.Namespace, cluster)
+				svcReferences = append(svcReferences, &key)
+			}
+			svcReferences = FilterUniqueIstioReferences(svcReferences)
+
+			services = append(services, models.ServiceOverview{
+				Cluster:           cluster,
+				Health:            models.EmptyServiceHealth(),
+				HealthAnnotations: map[string]string{},
+				IstioReferences:   svcReferences,
+				IstioSidecar:      true,
+				Labels:            se.Labels,
+				Name:              hostname,
+				Namespace:         se.Namespace,
+				ServiceRegistry:   "External",
+			})
 		}
-		// TODO wildcards may force additional checks on hostnames ?
-		svcServiceEntries := kubernetes.FilterServiceEntriesByHostname(istioConfigList.ServiceEntries, item.Hostname)
-		svcDestinationRules := kubernetes.FilterDestinationRulesByHostname(istioConfigList.DestinationRules, item.Hostname)
-		svcVirtualServices := kubernetes.FilterVirtualServicesByHostname(istioConfigList.VirtualServices, item.Hostname)
-		svcGateways := kubernetes.FilterGatewaysByVirtualServices(istioConfigList.Gateways, svcVirtualServices)
-		svcReferences := make([]*models.IstioValidationKey, 0)
-		for _, se := range svcServiceEntries {
-			ref := models.BuildKey(kubernetes.ServiceEntries, se.Name, se.Namespace, cluster)
-			svcReferences = append(svcReferences, &ref)
-		}
-		for _, vs := range svcVirtualServices {
-			ref := models.BuildKey(kubernetes.VirtualServices, vs.Name, vs.Namespace, cluster)
-			svcReferences = append(svcReferences, &ref)
-		}
-		for _, dr := range svcDestinationRules {
-			ref := models.BuildKey(kubernetes.DestinationRules, dr.Name, dr.Namespace, cluster)
-			svcReferences = append(svcReferences, &ref)
-		}
-		for _, gw := range svcGateways {
-			ref := models.BuildKey(kubernetes.Gateways, gw.Name, gw.Namespace, cluster)
-			svcReferences = append(svcReferences, &ref)
-		}
-		svcReferences = FilterUniqueIstioReferences(svcReferences)
-		// External Istio registries may have references to ServiceEntry and/or Federation
-		service := models.ServiceOverview{
-			Name:              item.Attributes.Name,
-			Namespace:         item.Attributes.Namespace,
-			IstioSidecar:      hasSidecar,
-			AppLabel:          appLabelFound,
-			Health:            models.EmptyServiceHealth(),
-			HealthAnnotations: map[string]string{},
-			Labels:            item.Attributes.Labels,
-			Selector:          item.Attributes.LabelSelectors,
-			IstioReferences:   svcReferences,
-			ServiceRegistry:   item.Attributes.ServiceRegistry,
-		}
-		services = append(services, service)
 	}
 	return services
 }
@@ -509,7 +484,7 @@ func (in *SvcService) GetServiceDetails(ctx context.Context, cluster, namespace,
 	var hth models.ServiceHealth
 	var istioConfigList *models.IstioConfigList
 	var ws models.Workloads
-	var rSvcs []*kubernetes.RegistryService
+	var namespaceSvcs []core_v1.Service
 	var nsmtls models.MTLSStatus
 
 	wg := sync.WaitGroup{}
@@ -537,12 +512,9 @@ func (in *SvcService) GetServiceDetails(ctx context.Context, cluster, namespace,
 			}
 		}(ctx)
 
-		if in.conf.ExternalServices.Istio.IstioAPIEnabled {
-			registryCriteria := RegistryCriteria{
-				Namespace: namespace,
-				Cluster:   cluster,
-			}
-			rSvcs = in.businessLayer.RegistryStatus.GetRegistryServices(registryCriteria)
+		nsSvcList := &core_v1.ServiceList{}
+		if err := kubeCache.List(ctx, nsSvcList, client.InNamespace(namespace)); err == nil {
+			namespaceSvcs = nsSvcList.Items
 		}
 	}
 
@@ -629,19 +601,18 @@ func (in *SvcService) GetServiceDetails(ctx context.Context, cluster, namespace,
 	waypointWk := in.GetWaypointsForService(ctx, &svc)
 
 	serviceOverviews := make([]*models.ServiceOverview, 0)
-	// Convert filtered k8sClients services into ServiceOverview, only several attributes are needed
-	for _, item := range rSvcs {
-		// app label selector of services should match, loading all versions
-		if selector, err3 := labels.ConvertSelectorToLabelsMap(labelsSelector); err3 == nil {
-			appLabelName, appLabelNameFound := in.conf.GetAppLabelName(selector)
-			if appSelector, ok := item.Attributes.LabelSelectors[appLabelName]; ok && appLabelNameFound && appSelector == selector.Get(appLabelName) {
-				if _, verLabelNameFound := in.conf.GetVersionLabelName(item.Attributes.LabelSelectors); verLabelNameFound {
+	appLabelName, appLabelNameFound := in.conf.GetAppLabelName(svc.Selectors)
+	if appLabelNameFound {
+		appLabelValue := svc.Selectors[appLabelName]
+		for _, item := range namespaceSvcs {
+			if selectorValue, ok := item.Spec.Selector[appLabelName]; ok && selectorValue == appLabelValue {
+				if _, verLabelNameFound := in.conf.GetVersionLabelName(item.Spec.Selector); verLabelNameFound {
 					ports := map[string]int{}
-					for _, port := range item.Ports {
-						ports[port.Name] = port.Port
+					for _, port := range item.Spec.Ports {
+						ports[port.Name] = int(port.Port)
 					}
 					serviceOverviews = append(serviceOverviews, &models.ServiceOverview{
-						Name:  item.Attributes.Name,
+						Name:  item.Name,
 						Ports: ports,
 					})
 				}
@@ -664,8 +635,7 @@ func (in *SvcService) GetServiceDetails(ctx context.Context, cluster, namespace,
 	s.Service = svc
 	s.SetPods(pods, in.businessLayer.Mesh.IsControlPlane)
 	s.Endpoints = *models.GetEndpointsFromPods(pods)
-	// ServiceDetail will consider if the Service is a External/Federation entry
-	if s.Service.Type == "External" || s.Service.Type == "Federation" {
+	if s.Service.Type == "External" {
 		s.IstioSidecar = true
 	} else {
 		s.SetIstioSidecar(wo)
@@ -680,8 +650,7 @@ func (in *SvcService) GetServiceDetails(ctx context.Context, cluster, namespace,
 	s.K8sHTTPRoutes = kubernetes.FilterK8sHTTPRoutesByService(istioConfigList.K8sHTTPRoutes, istioConfigList.K8sReferenceGrants, namespace, service, in.conf)
 	s.K8sGRPCRoutes = kubernetes.FilterK8sGRPCRoutesByService(istioConfigList.K8sGRPCRoutes, istioConfigList.K8sReferenceGrants, namespace, service, in.conf)
 	s.K8sInferencePools = kubernetes.FilterK8sInferencePoolByService(istioConfigList.K8sInferencePools, namespace, service)
-	if s.Service.Type == "External" || s.Service.Type == "Federation" {
-		// On ServiceEntries cases the Service name is the hostname
+	if s.Service.Type == "External" {
 		s.ServiceEntries = kubernetes.FilterServiceEntriesByHostname(istioConfigList.ServiceEntries, s.Service.Name)
 	}
 	s.IsAmbient = isAmbient
@@ -893,22 +862,26 @@ func (in *SvcService) GetService(ctx context.Context, cluster, namespace, servic
 
 	svc := models.Service{}
 	// First try to get the service from kube.
-	// If it doesn't exist, try to get it from the Istio Registry.
+	// If it doesn't exist, try to find it via ServiceEntry hostnames.
 	kSvc := &core_v1.Service{}
 	if err := cache.Get(ctx, client.ObjectKey{Name: service, Namespace: namespace}, kSvc); err != nil {
-		// Check if this service is in the Istio Registry
-		criteria := RegistryCriteria{
-			Namespace: namespace,
-			Cluster:   cluster,
+		istioCriteria := IstioConfigCriteria{
+			IncludeServiceEntries: true,
 		}
-		rSvcs := in.businessLayer.RegistryStatus.GetRegistryServices(criteria)
-		for _, rSvc := range rSvcs {
-			if rSvc.Attributes.Name == service {
-				svc.ParseRegistryService(cluster, rSvc)
-				break
+		istioConfigs, err2 := in.businessLayer.IstioConfig.GetIstioConfigListForNamespace(ctx, cluster, namespace, istioCriteria)
+		if err2 == nil {
+			for _, se := range istioConfigs.ServiceEntries {
+				for _, host := range se.Spec.Hosts {
+					if host == service {
+						svc.ParseServiceEntryService(cluster, se, host)
+						break
+					}
+				}
+				if svc.Name != "" {
+					break
+				}
 			}
 		}
-		// Service not found in Kubernetes and Istio
 		if svc.Name == "" {
 			return svc, kubernetes.NewNotFound(service, "Kiali", "Service")
 		}

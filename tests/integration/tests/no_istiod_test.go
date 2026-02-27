@@ -37,13 +37,13 @@ func TestNoIstiod(t *testing.T) {
 	require.NoError(instance.UpdateConfig(ctx, cfg))
 	require.NoError(instance.Restart(ctx))
 
-	t.Run("ServicesListNoRegistryServices", servicesListNoRegistryServices)
+	t.Run("ServicesListNoIstiod", servicesListNoIstiod)
 	t.Run("NoProxyStatus", noProxyStatus)
 	t.Run("istioStatus", istioStatus)
 	t.Run("emptyValidations", emptyValidations)
 }
 
-func servicesListNoRegistryServices(t *testing.T) {
+func servicesListNoIstiod(t *testing.T) {
 	require := require.New(t)
 	serviceList, err := kiali.ServicesList(kiali.BOOKINFO)
 
@@ -56,12 +56,12 @@ func servicesListNoRegistryServices(t *testing.T) {
 	applySe := utils.ApplyFile("../assets/bookinfo-service-entry-external.yaml", "bookinfo")
 	require.True(applySe)
 
-	// The service result should be the same
+	// ServiceEntries are read directly from the K8s API, not from the Istiod
+	// registry, so SE-backed services appear even when the Istio API is disabled.
 	serviceList2, err3 := kiali.ServicesList(kiali.BOOKINFO)
 	require.NoError(err3)
-	require.True(len(serviceList2.Services) == sl)
+	require.Equal(sl+3, len(serviceList2.Services))
 
-	// Now, create a Service Entry (Part of th
 	require.NotNil(serviceList.Validations)
 	require.Equal(kiali.BOOKINFO, serviceList.Services[0].Namespace)
 
