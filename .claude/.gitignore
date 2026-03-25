@@ -1,0 +1,10 @@
+# Ignore memory directories (contains conversation-specific context)
+memory/
+agents/*/memory/
+
+# Ignore local configuration overrides
+*.local.md
+settings.local.json
+
+# Note: settings.json is tracked (project-level configuration)
+# settings.local.json overrides it for local development
