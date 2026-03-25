@@ -23,6 +23,7 @@ You are a Quality Engineering specialist for the Kiali project. Your role is to 
 5. **Test Documentation**: Help understand test requirements and procedures
 6. **CI Debugging**: Analyze and reproduce CI test failures locally
 7. **Test Development**: Create and modify Cypress test files, step definitions, and fixtures
+8. **Regression Testing**: Execute comprehensive regression test suites on OpenShift and other platforms
 
 ## Files I Can Work With
 
@@ -748,6 +749,52 @@ kubectl get all,kiali,ossmconsole -A | grep kiali
 
 ---
 
+## Regression Testing Workflows
+
+### OpenShift Regression Testing
+
+For comprehensive regression testing on OpenShift clusters, see:
+
+**Documentation:**
+- [OpenShift Regression Testing Workflow](../../workflows/REGRESSION_TESTING_OCP.md) - Complete manual workflow guide
+- [regression-ocp Skill](../../skills/regression-ocp.md) - Automated regression testing skill
+
+**Key Scripts:**
+- `hack/install-kiali-ossmc-openshift.sh` - Installs Istio, Kiali, and OSSMC on OpenShift
+- `hack/istio/install-istio-via-istioctl.sh` - Istio installation via istioctl
+
+**Workflow Summary:**
+1. Set up remote OpenShift environment (or use CRC)
+2. Install Istio, Kiali, and OSSMC using installation scripts
+3. Configure Cypress environment variables for OpenShift
+4. Execute Cypress test suite with stern logging enabled
+5. Collect logs from Kiali, OSSMC, and Istio pods on failure
+6. Report regressions via GitHub issues with test results and logs
+
+**Environment Variables for OpenShift:**
+```bash
+export CYPRESS_BASE_URL=<kiali-route-url>
+export CYPRESS_USERNAME="kubeadmin"
+export CYPRESS_PASSWD=<password>
+export CYPRESS_AUTH_PROVIDER="kube:admin"
+export TEST_GROUP="not @multi-cluster"
+export CYPRESS_STERN=true
+```
+
+**Log Collection:**
+```bash
+# Kiali logs
+oc logs -n istio-system -l app.kubernetes.io/name=kiali --tail=1000 > kiali-logs.txt
+
+# OSSMC logs
+oc logs -n ossmconsole -l app.kubernetes.io/name=ossmconsole --tail=1000 > ossmc-logs.txt
+
+# Istio logs
+oc logs -n istio-system -l app=istiod --tail=1000 > istiod-logs.txt
+```
+
+---
+
 ## Key Files Reference
 
 **Integration Test Scripts:**
@@ -755,6 +802,7 @@ kubectl get all,kiali,ossmconsole -A | grep kiali
 - `hack/run-molecule-tests.sh` - Molecule test runner
 - `hack/istio/install-testing-demos.sh` - Install demo apps
 - `hack/ci-get-debug-info.sh` - Collect debug information
+- `hack/install-kiali-ossmc-openshift.sh` - OpenShift regression test setup
 
 **Cypress Test Files:**
 - `frontend/cypress/integration/featureFiles/*.feature` - Gherkin BDD test scenarios
@@ -772,3 +820,5 @@ kubectl get all,kiali,ossmconsole -A | grep kiali
 
 **Documentation:**
 - [AGENTS.md](../../../../AGENTS.md) - Comprehensive development and testing guide
+- [WORKING_WITH_OSSMC.md](../../../../WORKING_WITH_OSSMC.md) - OSSMC installation and usage
+- [Cypress README](../../../../frontend/cypress/README.md) - Cypress testing guide
