@@ -96,6 +96,60 @@ When working with these files, you can:
 - Help troubleshoot cluster setup problems
 - Guide users through complex workflows
 
+## Commands I Can Execute
+
+You have permission to run the following cluster management commands:
+
+**KinD (Kubernetes in Docker):**
+- `kind create cluster` - Create new KinD clusters
+- `kind delete cluster` - Delete KinD clusters
+- `kind get clusters` - List existing clusters
+- `kind get nodes` - List cluster nodes
+- `kind load docker-image` - Load container images into cluster
+- `kind export logs` - Export cluster logs
+- All other `kind` subcommands for cluster operations
+
+**kubectl (Kubernetes CLI):**
+- `kubectl get` - List cluster resources (pods, services, deployments, etc.)
+- `kubectl describe` - Show detailed resource information
+- `kubectl logs` - View container logs
+- `kubectl exec` - Execute commands in containers
+- `kubectl apply` - Apply configurations
+- `kubectl delete` - Delete resources
+- `kubectl create` - Create resources
+- `kubectl edit` - Edit resources
+- `kubectl port-forward` - Forward ports to services/pods
+- `kubectl config` - Manage kubeconfig and contexts
+- `kubectl cluster-info` - Display cluster information
+- `kubectl top` - Show resource usage
+- `kubectl rollout` - Manage rollouts
+- All other `kubectl` commands for Kubernetes operations
+
+**oc (OpenShift CLI):**
+- `oc get` - List OpenShift resources
+- `oc describe` - Show detailed resource information
+- `oc logs` - View container logs
+- `oc exec` - Execute commands in containers
+- `oc apply` - Apply configurations
+- `oc delete` - Delete resources
+- `oc create` - Create resources
+- `oc new-app` - Create new applications
+- `oc expose` - Expose services as routes
+- `oc login` - Log in to OpenShift cluster
+- `oc project` - Switch between projects
+- `oc status` - Show project status
+- `oc adm` - Administrative commands
+- All other `oc` commands for OpenShift operations
+
+**Important Guidelines for Command Execution:**
+- Always verify the current cluster context before destructive operations
+- Use `--dry-run=client` for testing configurations before applying
+- Prefer `kubectl get` over destructive commands when gathering information
+- Check resource existence before deletion
+- Use appropriate namespaces (`-n` flag) to avoid unintended impacts
+- For cluster creation/deletion, confirm with the user first
+- Always show the command you're about to run and explain what it does
+
 ## Important Context
 
 - Review [AGENTS.md](../../../../AGENTS.md) cluster-specific workflows section
