@@ -46,7 +46,7 @@ done
 run_stern() {
   local resource="$1"
   local namespace="$2"
-  bash -c "exec -a sternLogs \"$SCRIPT_DIR/stern\" $resource $namespace --tail 0 -o json --only-log-lines --max-log-requests 150 >> $LOGFILE 2>&1" &
+  bash -c "exec -a sternLogs \"$SCRIPT_DIR/stern\" $resource $namespace --tail 0 -o json --only-log-lines --max-log-requests 150 --include '(?i)(error|fatal|critical|panic)' >> $LOGFILE 2>&1" &
 }
 
 if [[ "${STOP}" == "false" && "${LOGFILE}" != "" ]]; then
@@ -63,6 +63,39 @@ if [[ "${STOP}" == "false" && "${LOGFILE}" != "" ]]; then
   run_stern "productpage" "-n bookinfo"
   run_stern "ratings" "-n bookinfo"
   run_stern "reviews" "-n bookinfo"
+  
+  #sleep demo
+  run_stern "sleep" "-n sleep"
+
+  # error rates demo - alpha namespace
+  run_stern "a-client" "-n alpha"
+  run_stern "b-client" "-n alpha"
+  run_stern "c-client" "-n alpha"
+  run_stern "d-client" "-n alpha"
+  run_stern "e-client" "-n alpha"
+  run_stern "f-client" "-n alpha"
+  run_stern "v-server" "-n alpha"
+  run_stern "w-server" "-n alpha"
+  run_stern "x-server" "-n alpha"
+  run_stern "y-server" "-n alpha"
+  run_stern "z-server" "-n alpha"
+
+  # error rates demo - beta namespace
+  run_stern "a-client" "-n beta"
+  run_stern "b-client" "-n beta"
+  run_stern "c-client" "-n beta"
+  run_stern "d-client" "-n beta"
+  run_stern "e-client" "-n beta"
+  run_stern "f-client" "-n beta"
+  run_stern "v-server" "-n beta"
+  run_stern "w-server" "-n beta"
+  run_stern "x-server" "-n beta"
+  run_stern "y-server" "-n beta"
+  run_stern "z-server" "-n beta"
+
+  # loggers demo
+  run_stern "custom-logger" "-n loggers"
+  run_stern "json-logger" "-n loggers"
 
   # check if stern is running, otherwise return non zero exit code, so cypress will notice and 
   if ! pgrep -f "sternLogs" > /dev/null; then

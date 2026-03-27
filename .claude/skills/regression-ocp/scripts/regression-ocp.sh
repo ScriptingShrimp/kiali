@@ -27,11 +27,14 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../" && pwd)"
 DRY_RUN="${DRY_RUN:-false}"
 TEST_GROUP="${TEST_GROUP:-not @multi-cluster}"
+CYPRESS_BASE_URL="${CYPRESS_BASE_URL:-http://localhost:3000}"
+CYPRESS_USERNAME="${CYPRESS_USERNAME:-jenkins}"
+CYPRESS_AUTH_PROVIDER="${CYPRESS_AUTH_PROVIDER:-my_htpasswd_provider}"
 CYPRESS_VIDEO="${CYPRESS_VIDEO:-false}"
-CYPRESS_STERN="${CYPRESS_STERN:-true}"
+CYPRESS_STERN="${CYPRESS_STERN:-false}"
 SKIP_INSTALL="${SKIP_INSTALL:-false}"
 
 # Parse command line arguments
@@ -115,8 +118,13 @@ check_prerequisites() {
   fi
 
   # Check for stern (optional, warn only)
+  # First check if stern is available in hack/stern directory
+  if [[ -x "${REPO_ROOT}/hack/stern/stern" ]]; then
+    export PATH="${REPO_ROOT}/hack/stern:${PATH}"
+  fi
+
   if [[ "${CYPRESS_STERN}" == "true" ]] && ! command -v stern &> /dev/null; then
-    log_warning "stern is not installed. Stern logging will be disabled."
+    log_warning "stern is not installed. Run 'hack/stern/download-stern.sh' to install it. Stern logging will be disabled."
     CYPRESS_STERN=false
   fi
 
@@ -135,20 +143,22 @@ check_prerequisites() {
 validate_cluster_access() {
   log_section "Step 2: Validating OpenShift Cluster Access"
 
-  if ! oc whoami &> /dev/null; then
-    log_error "Not logged into an OpenShift cluster"
+  if ! oc status &> /dev/null; then
+    log_error "oc status failed — not connected to an OpenShift cluster"
     echo ""
-    echo "Please log in using one of:"
+    echo "Please log in first:"
     echo "  oc login <cluster-url>"
-    echo "  or let the installation script start CRC"
+    echo "Then verify with:"
+    echo "  oc status"
     exit 1
   fi
 
+  log_success "oc status returned valid cluster information"
+
   local username
   username=$(oc whoami)
-  log_success "Logged in as: ${username}"
+  log_info "Logged in as: ${username}"
 
-  # Get cluster info
   local cluster_url
   cluster_url=$(oc whoami --show-server)
   log_info "Cluster URL: ${cluster_url}"
@@ -157,6 +167,28 @@ validate_cluster_access() {
   if ! oc auth can-i '*' '*' --all-namespaces &> /dev/null; then
     log_warning "You may not have cluster-admin privileges. Some operations might fail."
   fi
+}
+
+# Validate required environment variables
+validate_environment_variables() {
+  log_section "Step 2b: Validating Environment Variables"
+
+  if [[ -z "${CYPRESS_PASSWD}" ]]; then
+    log_error "CYPRESS_PASSWD is not set. This variable is required and has no default."
+    echo ""
+    echo "Set it before running the script:"
+    echo "  export CYPRESS_PASSWD=<your-password>"
+    exit 1
+  fi
+  log_success "CYPRESS_PASSWD is set"
+
+  log_info "CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
+  log_info "CYPRESS_USERNAME=${CYPRESS_USERNAME}"
+  log_info "CYPRESS_AUTH_PROVIDER=${CYPRESS_AUTH_PROVIDER}"
+  log_info "CYPRESS_ALLOW_INSECURE_KIALI_API=${CYPRESS_ALLOW_INSECURE_KIALI_API:-<not set>}"
+  log_info "CYPRESS_STERN=${CYPRESS_STERN}"
+
+  log_success "Environment variables validated"
 }
 
 # Install components
@@ -192,43 +224,29 @@ install_components() {
 configure_test_environment() {
   log_section "Step 4: Configuring Test Environment"
 
-  # Get Kiali URL
   export CYPRESS_BASE_URL
-  CYPRESS_BASE_URL=$(oc get route -n istio-system -l app.kubernetes.io/name=kiali -o jsonpath='https://{..spec.host}/' 2>/dev/null)
-
-  if [[ -z "${CYPRESS_BASE_URL}" ]]; then
-    log_error "Could not find Kiali route in istio-system namespace"
-    echo ""
-    echo "Check if Kiali is deployed:"
-    echo "  oc get route -n istio-system"
-    exit 1
-  fi
-
-  log_info "Kiali URL: ${CYPRESS_BASE_URL}"
-
-  # Set authentication variables (use environment or defaults)
-  export CYPRESS_USERNAME="${CYPRESS_USERNAME:-kubeadmin}"
-  export CYPRESS_AUTH_PROVIDER="${CYPRESS_AUTH_PROVIDER:-kube:admin}"
-
-  # Prompt for password if not set
-  if [[ -z "${CYPRESS_PASSWD}" ]]; then
-    log_info "OpenShift password required for user: ${CYPRESS_USERNAME}"
-    echo -n "Password: "
-    read -s CYPRESS_PASSWD
-    echo ""
-    export CYPRESS_PASSWD
-  fi
-
-  # Set test configuration
-  export TEST_GROUP
-  export CYPRESS_VIDEO
+  export CYPRESS_USERNAME
+  export CYPRESS_PASSWD
+  export CYPRESS_AUTH_PROVIDER
   export CYPRESS_STERN
-  export CYPRESS_ALLOW_INSECURE_KIALI_API="${CYPRESS_ALLOW_INSECURE_KIALI_API:-true}"
+  export CYPRESS_VIDEO
+  export TEST_GROUP
 
-  log_success "Environment configured"
-  log_info "Test group: ${TEST_GROUP}"
-  log_info "Video recording: ${CYPRESS_VIDEO}"
-  log_info "Stern logging: ${CYPRESS_STERN}"
+  if [[ -n "${CYPRESS_ALLOW_INSECURE_KIALI_API}" ]]; then
+    export CYPRESS_ALLOW_INSECURE_KIALI_API
+  fi
+
+  log_success "Environment configured successfully"
+  echo ""
+  log_info "Summary of environment variables:"
+  log_info "  CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
+  log_info "  CYPRESS_USERNAME=${CYPRESS_USERNAME}"
+  log_info "  CYPRESS_PASSWD=****** (hidden)"
+  log_info "  CYPRESS_AUTH_PROVIDER=${CYPRESS_AUTH_PROVIDER}"
+  log_info "  CYPRESS_ALLOW_INSECURE_KIALI_API=${CYPRESS_ALLOW_INSECURE_KIALI_API:-<not set>}"
+  log_info "  TEST_GROUP=${TEST_GROUP}"
+  log_info "  CYPRESS_VIDEO=${CYPRESS_VIDEO}"
+  log_info "  CYPRESS_STERN=${CYPRESS_STERN}"
 }
 
 # Run tests
@@ -388,6 +406,7 @@ main() {
 
   check_prerequisites
   validate_cluster_access
+  validate_environment_variables
   install_components
   configure_test_environment
 

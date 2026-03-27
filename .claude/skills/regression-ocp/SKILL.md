@@ -15,22 +15,39 @@ This skill automates the complete regression testing workflow for Kiali on OpenS
 
 When invoked as `/regression-ocp` or when requested to run OpenShift regression tests:
 
-1. Change to the skill directory:
+1. **Verify OpenShift connectivity** — `oc status` must return valid cluster information:
+   ```bash
+   oc status
+   ```
+   If this fails, log in first with `oc login <cluster-url>`.
+
+2. **Set required environment variables** before running the script:
+   ```bash
+   export CYPRESS_BASE_URL=<value>                      # defaults to http://localhost:3000
+   export CYPRESS_USERNAME=<value>                      # defaults to jenkins, opt. kubeadmin
+   export CYPRESS_PASSWD=<value>                        # REQUIRED — no default
+   export CYPRESS_AUTH_PROVIDER=<value>                 # defaults to my_htpasswd_provider
+   export CYPRESS_ALLOW_INSECURE_KIALI_API=<true|false> # useful for insecure endpoints like CRC
+   export CYPRESS_STERN=<true|false>                    # defaults to false, set true for extended stern logging
+   ```
+   At minimum, `CYPRESS_PASSWD` **must** be set — the script will abort if it is missing.
+
+3. Change to the skill directory:
    ```bash
    cd .claude/skills/regression-ocp
    ```
 
-2. Execute the script with user-provided arguments:
+4. Execute the script with user-provided arguments:
    ```bash
    ./scripts/regression-ocp.sh $ARGUMENTS
    ```
 
-3. If no arguments provided, run with defaults:
+5. If no arguments provided, run with defaults:
    ```bash
    ./scripts/regression-ocp.sh
    ```
 
-The script handles all workflow steps automatically and provides colored output for progress tracking.
+The script validates that `oc status` succeeds and that required variables are set before proceeding. It provides colored output for progress tracking.
 
 ## When to Use
 
@@ -44,7 +61,8 @@ Invoke this skill when you need to:
 
 1. **Validates Prerequisites**
    - Checks for required tools (oc, yarn, node, stern)
-   - Ensures you're logged into an OpenShift cluster
+   - Validates `oc status` returns valid cluster information
+   - Verifies required environment variables are set (especially `CYPRESS_PASSWD`)
    - Verifies cluster access and permissions
 
 2. **Sets Up Environment**
@@ -56,8 +74,8 @@ Invoke this skill when you need to:
    - Waits for all components to be ready
 
 3. **Configures Test Environment**
-   - Discovers Kiali route URL automatically
-   - Sets up authentication (kubeadmin by default, prompts for password)
+   - Uses pre-set environment variables (CYPRESS_BASE_URL, CYPRESS_USERNAME, etc.)
+   - Validates authentication credentials are available
    - Configures Cypress environment variables
 
 4. **Executes Tests**
@@ -85,7 +103,7 @@ Invoke this skill when you need to:
 /regression-ocp
 ```
 
-The skill will prompt for OpenShift password if not already set in environment.
+Ensure `CYPRESS_PASSWD` and other required variables are set before invoking.
 
 ### Options
 
@@ -111,22 +129,31 @@ The skill will prompt for OpenShift password if not already set in environment.
 
 ### Environment Variables
 
-You can customize behavior with environment variables:
+**IMPORTANT**: The following environment variables **must** be set before executing the script. The script will abort if `CYPRESS_PASSWD` is not set or if `oc status` fails.
 
 ```bash
-# Authentication
-export CYPRESS_USERNAME="kubeadmin"        # Default: kubeadmin
-export CYPRESS_PASSWD="your-password"      # Prompts if not set
-export CYPRESS_AUTH_PROVIDER="kube:admin"  # Default: kube:admin
+# Verify cluster connectivity first
+oc status
+
+# Required — no default, script aborts without it
+export CYPRESS_PASSWD=<value>
+
+# Optional — have defaults but should be reviewed
+export CYPRESS_BASE_URL=<value>                      # defaults to http://localhost:3000
+export CYPRESS_USERNAME=<value>                      # defaults to jenkins, opt. kubeadmin
+export CYPRESS_AUTH_PROVIDER=<value>                 # defaults to my_htpasswd_provider
+export CYPRESS_ALLOW_INSECURE_KIALI_API=<true|false> # useful for insecure endpoints like CRC
+export CYPRESS_STERN=<true|false>                    # defaults to false, set true for extended stern logging
 
 # Test configuration
-export TEST_GROUP="@smoke"                 # Default: "not @multi-cluster"
-export CYPRESS_VIDEO=true                  # Default: false
-export CYPRESS_STERN=false                 # Default: true
+export TEST_GROUP="@smoke"                           # Default: "not @multi-cluster"
+export CYPRESS_VIDEO=true                            # Default: false
 
 # Then run
 /regression-ocp
 ```
+
+**Note**: Without these variables properly configured, Cypress tests cannot authenticate to Kiali on OpenShift.
 
 ## Prerequisites
 
@@ -134,15 +161,21 @@ Before running this skill:
 
 1. **OpenShift Access**
    - You must be logged into an OpenShift cluster: `oc login <cluster-url>`
-   - OR the installation script will attempt to start CRC
+   - `oc status` must return valid cluster information
 
-2. **Required Tools**
+2. **Environment Variables**
+   - `CYPRESS_PASSWD` **must** be set (no default)
+   - Review and set other variables as needed (see [Environment Variables](#environment-variables))
+
+3. **Required Tools**
    - `oc` - OpenShift CLI
    - `node` - Node.js runtime
    - `yarn` - Package manager
    - `stern` - (optional) Multi-pod log tailing
+     - Can be installed via `hack/stern/download-stern.sh`
+     - The script will automatically detect stern in `hack/stern/` directory
 
-3. **Repository State**
+4. **Repository State**
    - You must be in the kiali repository root
    - Frontend dependencies should be installed (`yarn install` in `frontend/`)
 
@@ -207,16 +240,17 @@ export TEST_GROUP="@smoke"
 
 ## Troubleshooting
 
-### "Not logged into OpenShift"
+### "oc status failed" / "Not logged into OpenShift"
 ```bash
 oc login https://api.your-cluster.com:6443
+oc status  # verify connectivity
 ```
 
 ### "Missing required dependencies"
 Install the missing tools:
 - `oc`: Download from Red Hat OpenShift website
 - `node`/`yarn`: Use nvm or package manager
-- `stern`: `brew install stern` or download binary
+- `stern`: Run `hack/stern/download-stern.sh` from the repository root
 
 ### "Installation failed"
 Check operator logs:
@@ -225,8 +259,11 @@ oc logs -n openshift-operators -l app.kubernetes.io/name=kiali-operator --tail=1
 ```
 
 ### Tests fail to authenticate
-Verify credentials:
+Verify credentials and environment variables:
 ```bash
+echo "CYPRESS_USERNAME=${CYPRESS_USERNAME}"
+echo "CYPRESS_PASSWD is set: $([ -n "${CYPRESS_PASSWD}" ] && echo yes || echo NO)"
+echo "CYPRESS_AUTH_PROVIDER=${CYPRESS_AUTH_PROVIDER}"
 oc login -u ${CYPRESS_USERNAME}
 ```
 

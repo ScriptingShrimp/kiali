@@ -5,7 +5,18 @@ Automated skill for executing comprehensive regression tests on OpenShift cluste
 ## Quick Start
 
 ```bash
-# Invoke the skill
+# 1. Verify OpenShift connectivity
+oc status
+
+# 2. Set required environment variables
+export CYPRESS_BASE_URL=<value>                      # defaults to http://localhost:3000
+export CYPRESS_USERNAME=<value>                      # defaults to jenkins, opt. kubeadmin
+export CYPRESS_PASSWD=<value>                        # REQUIRED — no default
+export CYPRESS_AUTH_PROVIDER=<value>                 # defaults to my_htpasswd_provider
+export CYPRESS_ALLOW_INSECURE_KIALI_API=<true|false> # useful for insecure endpoints like CRC
+export CYPRESS_STERN=<true|false>                    # defaults to false, set true for extended stern logging
+
+# 3. Invoke the skill
 /regression-ocp
 ```
 
@@ -56,15 +67,19 @@ See [SKILL.md](SKILL.md) for complete usage instructions and examples.
 
 ## Environment Variables
 
+**Must be set before executing the script.** `oc status` must also return valid information.
+
 ```bash
-CYPRESS_USERNAME        OpenShift username (default: kubeadmin)
-CYPRESS_PASSWD          OpenShift password (prompts if not set)
-CYPRESS_AUTH_PROVIDER   Auth provider (default: kube:admin)
-TEST_GROUP              Test group tag (default: "not @multi-cluster")
-CYPRESS_VIDEO           Enable video recording (default: false)
-CYPRESS_STERN           Enable stern logging (default: true)
-DRY_RUN                 Dry run mode (default: false)
-SKIP_INSTALL            Skip installation step (default: false)
+CYPRESS_BASE_URL               Kiali URL (default: http://localhost:3000)
+CYPRESS_USERNAME               OpenShift username (default: jenkins, opt. kubeadmin)
+CYPRESS_PASSWD                 OpenShift password (REQUIRED — no default, script aborts without it)
+CYPRESS_AUTH_PROVIDER          Auth provider (default: my_htpasswd_provider)
+CYPRESS_ALLOW_INSECURE_KIALI_API  Allow insecure API (useful for CRC)
+CYPRESS_STERN                  Enable stern logging (default: false, set true for extended logging)
+TEST_GROUP                     Test group tag (default: "not @multi-cluster")
+CYPRESS_VIDEO                  Enable video recording (default: false)
+DRY_RUN                        Dry run mode (default: false)
+SKIP_INSTALL                   Skip installation step (default: false)
 ```
 
 ## Development
