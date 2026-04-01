@@ -12,10 +12,11 @@ Feature: Kiali Graph page - Side panel menu actions
   @bookinfo-app
   @core-1
   @lpinterop
+  @selected
   Scenario: Actions in kebab menu of the side panel for a service node with existing traffic routing
     Given user graphs "bookinfo" namespaces
     And user clicks the "productpage" "service" node
-    And no cluster badge for the "graph side panel" should be visible
+    And no cluster badge for the graph side panel should be visible
     And user opens the kebab menu of the graph side panel
     And user clicks the "delete_traffic_routing" item of the kebab menu of the graph side panel
     Then user should see the confirmation dialog to delete all traffic routing
