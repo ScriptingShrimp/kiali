@@ -8,20 +8,20 @@ Build a **Claude Code plugin** that automates Cypress test debugging for Kiali w
 2. **Global plugin** (installable to `~/.claude/plugins/`) for team/community sharing
 3. **Multiple invocable skills** (`/cypress-run`, `/cypress-analyze`, `/cypress-debug`) that users can call
 
-The plugin traces through BDD feature files + step definitions, analyzes screenshots, identifies patterns, and **auto-applies high-confidence fixes (>90%)**.
+The plugin uses the standard `@selected` Gherkin tag to target specific scenarios for execution and analysis. It traces through BDD feature files + step definitions, analyzes screenshots, identifies patterns, and **auto-applies high-confidence fixes (>90%)**.
 
 **Key Metrics:**
-- Reduce debugging time from ~20 min to <5 min per failure
+- Significantly reduce debugging time per failure
 - Auto-fix 90%+ of high-confidence issues
 - Identify patterns across multiple failures
 - Zero external dependencies
 - Installable as global skill for reuse
 
-**Scope:** 3 phases + plugin packaging, 28-40 hours total
-- Phase 1: MVP commands + skills - 8-12 hrs
-- Phase 2: Quick analysis skill - 6-10 hrs  
-- Phase 3: Deep debugging skill + agent - 14-18 hrs
-- Packaging: Repository → Global plugin - 3-5 hrs
+**Scope:** 3 phases + plugin packaging
+- Phase 1: MVP commands + skills
+- Phase 2: Quick analysis skill
+- Phase 3: Deep debugging skill + agent
+- Packaging: Repository → Global plugin
 
 ---
 
@@ -33,13 +33,11 @@ Currently debugging test failures requires:
 1. ✓ Run tests manually (`yarn cypress:run:*`)
 2. ✓ Parse JUnit XML to find failures
 3. ✓ Correlate failures to screenshots
-4. **✗ SLOW:** Trace through BDD feature files and step definitions (10-15 min)
-5. **✗ SLOW:** Analyze screenshots + code + error messages (5-10 min)
-6. **✗ SLOW:** Manually apply fixes (5 min)
+4. **✗ SLOW:** Trace through BDD feature files and step definitions
+5. **✗ SLOW:** Analyze screenshots + code + error messages
+6. **✗ SLOW:** Manually apply fixes
 
-**Total:** ~20-30 minutes per failure
-
-**Goal:** Automate steps 4-6 (trace → analyze → fix) to <5 minutes
+**Goal:** Automate steps 4-6 (trace → analyze → fix)
 
 ---
 
@@ -82,8 +80,8 @@ Global Phase (for sharing)
 ```
 /cypress-run [tag]        → Execute tests (Skill definition)
 /cypress-status           → Display results (Skill definition)
-/cypress-analyze [test]   → Quick analysis (Skill definition)
-/cypress-debug [test]     → Deep debugging (Skill definition - launches agent)
+/cypress-analyze          → Quick analysis of @selected failures (Skill definition)
+/cypress-debug            → Deep debugging of @selected failures (Skill definition - launches agent)
 ```
 
 **Tier 2: Agents (Autonomous Workflows)**
@@ -122,6 +120,7 @@ Built-in tools: Bash, Read, Grep, Glob, Edit
 /cypress-run @core-1 headless junit # Headless with JUnit XML
 /cypress-run @ambient                # Ambient mesh tests
 /cypress-run multi-cluster           # Multi-cluster tests
+/cypress-run @selected               # Run only scenarios tagged @selected
 ```
 
 **Behavior:**
@@ -182,18 +181,18 @@ Built-in tools: Bash, Read, Grep, Glob, Edit
       Error: cy.getBySel() failed - element not found: severity-filter
       Screenshot: cypress/screenshots/core/workload_logs/Severity_Filtering.png
    
-   Next: /cypress-analyze <test-name> or launch cypress-debugger agent
+   Next: Tag failing scenario with @selected, then /cypress-analyze or launch cypress-debugger agent
    ```
 
 ---
 
-#### Command: `/cypress-analyze [test-name]`
+#### Command: `/cypress-analyze`
 
-**Purpose:** Quick failure analysis with pattern matching
+**Purpose:** Quick failure analysis of scenarios tagged with `@selected`
 
 **Behavior:**
-1. Parse test name from argument (or list failures if empty)
-2. Find matching failure in JUnit XML
+1. Find scenarios tagged `@selected` in `.feature` files
+2. Find matching failures in JUnit XML
 3. Gather context:
    - Error message and stack trace
    - Feature file and line number
@@ -226,7 +225,7 @@ Built-in tools: Bash, Read, Grep, Glob, Edit
    
    File: cypress/integration/common/app_details.ts:75
    
-   For detailed debugging: Launch cypress-debugger agent
+   For detailed debugging: /cypress-debug (launches cypress-debugger agent)
    ```
 
 ---
@@ -291,14 +290,14 @@ The `/cypress-analyze` command uses this pattern library:
 **Agent: `cypress-debugger`**
 
 **When to Use:**
-- /cypress-analyze result isn't clear
-- Multiple failures need investigation
+- `/cypress-analyze` result isn't clear
+- Scenarios tagged `@selected` need deep investigation
 - Need to trace through complex code paths
 - Want automatic fix application
 
 **7-Phase Workflow:**
 
-##### Phase 1: Results Parsing (5 min)
+##### Phase 1: Results Parsing
 - Locate latest JUnit XML in `frontend/cypress/results/`
 - Extract all failures with:
   - Test name and feature file
@@ -306,7 +305,7 @@ The `/cypress-analyze` command uses this pattern library:
   - Screenshot path
   - Duration and retry count
 
-##### Phase 2: Screenshot Analysis (10 min)
+##### Phase 2: Screenshot Analysis
 - Read screenshot using Read tool (PNG support)
 - Describe UI state in detail:
   - Is loading spinner visible?
@@ -315,7 +314,7 @@ The `/cypress-analyze` command uses this pattern library:
   - Layout/rendering issues?
 - Correlate screenshot state with error message
 
-##### Phase 3: Code Tracing (15 min)
+##### Phase 3: Code Tracing
 - **Find feature file:**
   ```bash
   grep -r "Scenario.*Test Name" cypress/integration/featureFiles/
@@ -332,12 +331,12 @@ The `/cypress-analyze` command uses this pattern library:
   - Check for cy.get(), cy.getBySel(), cy.intercept()
   - Find critical code section in stack trace
 
-##### Phase 4: Pattern Matching (10 min)
+##### Phase 4: Pattern Matching
 - Match against 6 patterns in Pattern Library
 - Score confidence (70-100%)
 - If multiple matches, rank by likelihood
 
-##### Phase 5: Root Cause Analysis (5 min)
+##### Phase 5: Root Cause Analysis
 - Synthesize findings:
   - Screenshot shows X
   - Error message says Y
@@ -346,7 +345,7 @@ The `/cypress-analyze` command uses this pattern library:
 - Determine root cause with confidence level
 - Example: "95% confidence: Loading state race condition"
 
-##### Phase 6: Fix Generation (10 min)
+##### Phase 6: Fix Generation
 - **High confidence (90%+):**
   - Generate exact code snippet
   - Provide file:line reference
@@ -450,7 +449,7 @@ Verify with: /cypress-run @core-1
 
 ## Implementation Timeline
 
-### Phase 1: MVP - Plugin Scaffolding + Basic Skills (8-12 hours)
+### Phase 1: MVP - Plugin Scaffolding + Basic Skills
 
 **Deliverables:**
 - Claude Code plugin structure with `plugin.json`
@@ -502,7 +501,7 @@ Verify with: /cypress-run @core-1
 
 ---
 
-### Phase 2: Quick Analysis Skill (6-10 hours)
+### Phase 2: Quick Analysis Skill
 
 **Deliverables:**
 - `/cypress-analyze` skill
@@ -529,7 +528,7 @@ Verify with: /cypress-run @core-1
 - Skills can launch agents via `cypress-debugger` invocation
 
 **Success Criteria:**
-- `/cypress-analyze app_details` analyzes failure in <30s
+- `/cypress-analyze` analyzes `@selected` failures in <30s
 - Identifies correct pattern 80%+ of time
 - Suggests actionable fix with confidence score
 - Reads and describes screenshots
@@ -537,7 +536,7 @@ Verify with: /cypress-run @core-1
 
 ---
 
-### Phase 3: Deep Debugging Agent + Auto-Fix Skill (14-18 hours)
+### Phase 3: Deep Debugging Agent + Auto-Fix Skill
 
 **Deliverables:**
 - `/cypress-debug` skill that launches autonomous agent
@@ -568,8 +567,8 @@ Verify with: /cypress-run @core-1
   - <70%: Suggest alternatives
 
 **Success Criteria:**
-- `/cypress-debug app_details` launches agent
-- Agent completes in <5 minutes
+- `/cypress-debug` launches agent for `@selected` scenarios
+- Agent completes analysis autonomously
 - Identifies root cause with 80%+ confidence
 - Auto-applies 90%+ of high-confidence fixes
 - Asks for approval on medium confidence (70-89%)
@@ -608,7 +607,7 @@ skills/
     │   Automate Cypress regression testing, failure analysis, and debugging.
     │   Trace through test code, analyze screenshots, identify patterns, auto-apply fixes.
     │
-    │   Usage: /cypress-run core, /cypress-analyze app_details, /cypress-debug
+    │   Usage: /cypress-run core, /cypress-run @selected, /cypress-analyze, /cypress-debug
     │   Launch agents: cypress-debugger
     │
     ├── commands/
@@ -702,7 +701,6 @@ git clone https://github.com/kiali/claude-code-cypress-qe ~/.claude/plugins/cypr
   - Glob (find files)
   - Edit (apply fixes)
 
-**Installation Time:** 0 hours
 
 ---
 
@@ -719,11 +717,11 @@ git clone https://github.com/kiali/claude-code-cypress-qe ~/.claude/plugins/cypr
 - ✓ Screenshots readable
 
 ### Phase 3 (Debugging + Auto-Fix) ← YOUR MAIN REQUEST
-- ✓ Agent completes in <5 min
+- ✓ Agent completes analysis autonomously
 - ✓ Root cause identified with 80%+ confidence
 - ✓ Auto-fixes 90%+ of high-confidence cases
 - ✓ Asks approval for 70-89% confidence
-- ✓ Debugging time reduced from 20 min to <5 min
+- ✓ Debugging time significantly reduced
 
 ---
 
@@ -784,20 +782,21 @@ git clone https://github.com/kiali/claude-code-cypress-qe ~/.claude/plugins/cypr
 # Available immediately in the Kiali Claude Code session
 /cypress-run core
 /cypress-status
-/cypress-analyze app_details
-/cypress-debug app_details     # Launches agent
+/cypress-analyze                # Analyze @selected failures
+/cypress-debug                  # Launches agent for @selected failures
 ```
 
 **Global Plugin:**
 ```
 # After installation to ~/.claude/plugins/cypress-qe
 /cypress-run core              # Works in any project
+/cypress-run @selected         # Run @selected scenarios
 /cypress-status
-/cypress-analyze app_details
-/cypress-debug app_details     # Works if .claude/settings enables it
+/cypress-analyze               # Analyze @selected failures
+/cypress-debug                 # Launches agent for @selected failures
 ```
 
-### Phase 5: Packaging for Global Use (3-5 hours)
+### Phase 5: Packaging for Global Use
 
 After repo plugin works:
 
