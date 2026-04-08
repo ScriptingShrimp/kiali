@@ -276,85 +276,7 @@ docker compose run --rm test-generator \
 
 ---
 
-## Approach 4: LLM-Powered Self-Healing (Custom Build with Claude Sonnet)
-
-**Sources:** [ITNEXT article by Alex Nebot Oller](https://itnext.io/self-healing-e2e-tests-reducing-manual-maintenance-efforts-using-llms-db35104a7627), [GitHub: agune15/self-healing-e2e-tests-prototype](https://github.com/agune15/self-healing-e2e-tests-prototype)
-
-### What It Is
-
-A custom prototype using **Claude Sonnet 3.5** (now generalized to also support Gemini) to automatically analyze failing Cypress tests, propose exact code patches, apply them, and open a GitLab/GitHub merge request for human review. Conceived and built by a QA automation engineer tired of manual test maintenance loops.
-
-### How It Works
-
-```
-Cypress test run fails
-        │
-        ├─► Capture: error message + test code + file path
-        │
-        ├─► Render: HTML snapshot of the app at failure time
-        │
-        ├─► Build prompt: test context + HTML + code + helper deps
-        │
-        ├─► Claude Sonnet analyzes: diagnoses root cause
-        │
-        ├─► Claude returns JSON: [{
-        │     "isFixable": "YES",
-        │     "explanation": "...",
-        │     "fixes": [{
-        │       "file": "...",
-        │       "function": "...",
-        │       "before": "cy.typeInput(...)",
-        │       "after": "cy.typeAutocomplete(...)"
-        │     }]
-        │   }]
-        │
-        ├─► Patch script: validates before-code matches exactly, applies diff
-        │
-        └─► Git: creates branch + opens MR/PR for human review
-```
-
-### Prompt Structure (Key Sections)
-
-1. **Test Context** — title, error message, file path
-2. **Code and Dependency Context** — failing function + helpers
-3. **HTML Validation Messages** — frontend validation errors parsed from DOM
-4. **HTML Snapshot** — rendered HTML at failure time
-5. **Instructions** — structured reasoning strategies for Claude
-6. **Fix Format Requirements** — strict JSON schema; before/after must match code exactly
-7. **Formatting Rules** — JSON-only output; no hallucinated code
-8. **Example Fixes** — correct and incorrect examples to calibrate Claude's output
-
-### Accuracy by Failure Type (Reported)
-
-| Failure Category | Accuracy |
-|-----------------|----------|
-| Wrong `data-cy` selectors | 90% |
-| Wrong assertion text (typos) | 70% |
-| Wrong custom command usage | 50% |
-| Wrong input data / URL | 50% |
-| Missing checkbox interaction | 20% |
-| Element no longer exists | 40% |
-| Truly unfixable (503, infra) | 100% correctly identified as unfixable |
-
-### Common Failure Modes
-
-- **Code hallucinations** — Claude suggests fixes for code snippets that don't exist
-- **Wrong file/function mapping** — fix linked to the wrong location
-- **Hardcoded values** — replaces existing variables with hardcoded strings
-- **Missed root cause** — stops at first failure instead of finding all issues
-
-### Tradeoffs
-
-| ✅ Pros | ⚠️ Cons |
-|---------|---------|
-| Dramatically reduces manual maintenance for selector rot | 50–70% accuracy on complex failures — not production-ready alone |
-| Full human review via MR — safe workflow | Requires HTML snapshot infrastructure |
-| 90% accuracy on the most common failure type (wrong selectors) | Needs tight prompt engineering; context quality is critical |
-| Open source; adaptable to any CI system | Claude struggles without sufficient app context (routes, globals) |
-
----
-
-## Approach 5: Claude Code Subagents for Parallel Test Suite Generation
+## Approach 4: Claude Code Subagents for Parallel Test Suite Generation
 
 **Sources:** [Dev.to: Claude Code Subagents](https://dev.to/subprime2010/claude-code-subagents-how-to-run-parallel-tasks-without-hitting-rate-limits-4bpl), [Anthropic Sub-agents Docs](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 
@@ -441,122 +363,7 @@ The biggest challenge: a subagent assigned to `auth/` may modify shared `command
 
 ---
 
-## Approach 6: Decipher x Claude Code — Agentic Self-Maintaining Tests (Commercial)
-
-**Sources:** [Decipher Blog](https://getdecipher.com/blog/decipher-x-claude-let-claude-code-generate-self-maintaining-e2e-tests)
-
-### What It Is
-
-Decipher is an agentic QA platform that integrates directly with Claude Code via an MCP-style interface. Claude describes what to test, Decipher's agents execute it in a real managed browser with vision + DOM validation, and tests are stored and maintained on Decipher's infrastructure.
-
-### How It Works
-
-1. Install Decipher's Claude Code plugin
-2. Describe a flow to Claude: `"Test workflow generation: go through setup, select GPT5, save. Assert the generation completes."`
-3. Claude sends steps → Decipher's agent executes in a real browser
-4. If a step fails, Decipher sends Claude a screenshot + feedback → Claude adjusts → retries
-5. Result: a validated, browser-confirmed test stored on Decipher
-6. As your product changes, Decipher automatically updates the tests
-
-### Supported Interactions via Claude Chat
-
-```
-# Describe a flow
-"Test workflow generation: go through setup, select GPT5, save."
-
-# Bulk creation
-"Make 10 tests for each filter on /dashboard. Test edge cases for each."
-
-# Update tests
-"Our account creation test is failing because we removed oauth. 
- Update it to use email and password."
-
-# Coverage analysis
-"Which pages or flows are we not covering with our tests today?"
-```
-
-### Why It Differs from Static Playwright/Cypress Generation
-
-| Problem with Static Generation | Decipher's Solution |
-|---------------------------------|---------------------|
-| Guesses selectors from code context | Validates in real browser via vision + DOM |
-| You own the infra (runners, retries) | Managed browser infrastructure |
-| Static: rename a button → CI fails | Continuous auto-update as product changes |
-| Stack trace + screenshot only | Plain-language failure explanations (real bug vs. flow change) |
-| No visual assertions | Visual + semantic evaluation, not just DOM |
-
-### Tradeoffs
-
-| ✅ Pros | ⚠️ Cons |
-|---------|---------|
-| True agentic loop: Claude writes, Decipher validates | Commercial — paid platform |
-| Self-maintaining: no manual locator updates | Lock-in to Decipher's infrastructure |
-| Visual assertions without pain | Less control vs. self-hosted |
-| Plain-language failure reasoning | Early-stage product; feature surface still evolving |
-
----
-
-## Approach 7: `cy.ai` — Local LLM via Ollama (Open Source, No Cloud)
-
-**Sources:** [remarkablemark Medium post](https://remarkablemark.medium.com/cypress-ai-command-30eadacc8e68), [GitHub: remarkablemark](https://github.com/remarkablemark/remarkablemark.github.io/blob/master/_posts/2025/2025-06-01-cypress-ai-command.md)
-
-### What It Is
-
-`cy.ai` is an open-source community Cypress plugin (reviewed June 2025) that runs a local LLM via Ollama to generate and execute Cypress commands from natural language—without any external API key, cloud account, or paid service. This is the privacy-first / air-gapped approach.
-
-### How It Works
-
-1. Claude/LLM is replaced by a local model (`qwen2.5-coder` recommended)
-2. A prompt is constructed from your task description + current HTML body
-3. The prompt is sent to the local Ollama server (HTTP)
-4. The LLM returns Cypress code, which is cleaned and executed
-5. Generated code is cached to `cypress/e2e/**/__generated__/*.json` for reuse
-
-### Setup
-
-```bash
-# Install Ollama and pull model
-brew install ollama
-ollama pull qwen2.5-coder
-
-# Install the plugin
-npm install cy-ai --save-dev
-```
-
-```javascript
-// cypress/support/commands.js
-import 'cy-ai'
-```
-
-```javascript
-// cypress/e2e/login.cy.js
-describe('Login', () => {
-  it('logs in with valid credentials', () => {
-    cy.visit('/login')
-    cy.ai('Fill in email with user@example.com and password with secret, then submit')
-  })
-})
-```
-
-```javascript
-// cypress.config.js
-module.exports = {
-  chromeWebSecurity: false, // required to avoid CORS with Ollama
-}
-```
-
-### Tradeoffs
-
-| ✅ Pros | ⚠️ Cons |
-|---------|---------|
-| No API key, no cloud account | Local model quality much lower than Claude Sonnet |
-| Works offline / air-gapped environments | Slower inference on consumer hardware |
-| Zero ongoing cost | No self-healing, no caching across projects |
-| No data sent to external services | Limited community support vs. official tools |
-
----
-
-## Approach 8: Community MCP Servers for Cypress (GitHub)
+## Approach 5: Community MCP Servers for Cypress (GitHub)
 
 **Sources:** [miroslavmyrha/cypress-mcp](https://github.com/miroslavmyrha/cypress-mcp), [yashpreetbathla/cypress-mcp](https://github.com/yashpreetbathla/cypress-mcp)
 
@@ -599,11 +406,8 @@ Community-built MCP servers that expose Cypress testing capabilities to Claude (
 | 1 | **AGENTS.md / CLAUDE.md** | Community pattern | Yes | No | Encoding conventions for Claude Code |
 | 2 | **GitHub Actions + Claude Code** | Anthropic + community | Yes (Claude Code) | No | Auto-generating specs on every PR |
 | 3 | **Multi-LLM Framework** | Open source | Yes (one option) | No | Model-agnostic spec generation from CLI |
-| 4 | **Self-Healing LLM Prototype** | Open source | Yes (Sonnet 3.5) | No | Automated fix proposals for failing tests |
-| 5 | **Claude Code Subagents** | Anthropic | Yes (Claude Code) | No | Parallelizing large-scale spec generation |
-| 6 | **Decipher x Claude** | Commercial (Decipher) | Yes (Claude Code) | No | Self-maintaining tests with browser validation |
-| 7 | **`cy.ai` (Ollama)** | Open source | No (local LLM) | No | Air-gapped / privacy-first environments |
-| 8 | **Community MCP Servers** | Community | Yes | No | Local test run access for AI agents |
+| 4 | **Claude Code Subagents** | Anthropic | Yes (Claude Code) | No | Parallelizing large-scale spec generation |
+| 5 | **Community MCP Servers** | Community | Yes | No | Local test run access for AI agents |
 
 ---
 
@@ -635,7 +439,7 @@ Example `CLAUDE.md` snippet for a Gherkin suite:
 Use a community MCP server (`cypress-mcp`) to give Claude direct access to local test run data — spec content, command logs, DOM snapshots, and error messages — without needing Cypress Cloud. Claude can then diagnose failures and propose fixes in a tight loop.
 
 ### Phase 3: LLM-Powered Self-Healing for Selector Rot
-Wire Claude Sonnet into the CI failure pipeline (Approach 5) to automatically propose patches for broken selectors and open draft PRs for human review. This directly targets the most common maintenance pain point in Gherkin step definitions.
+Wire Claude Sonnet into the CI failure pipeline to automatically propose patches for broken selectors and open draft PRs for human review. This directly targets the most common maintenance pain point in Gherkin step definitions.
 
 ### Phase 4: GitHub Actions Auto-Generation for New Features (Optional)
 Add the Claude Code GitHub Action to PRs to automatically generate new Gherkin scenarios and step definitions for changed frontend components, following the conventions encoded in Phase 1.
@@ -644,13 +448,9 @@ Add the Claude Code GitHub Action to PRs to automatically generate new Gherkin s
 
 ## References
 
-- [Self-Healing in Cypress Blog](https://www.cypress.io/blog/ai-self-healing-in-cypress-reliable-tests-with-full-visibility/)
 - [Cypress AGENTS.md PR #33429](https://github.com/cypress-io/cypress/pull/33429)
-- [ITNEXT: Self-Healing E2E with LLMs](https://itnext.io/self-healing-e2e-tests-reducing-manual-maintenance-efforts-using-llms-db35104a7627)
 - [Multi-LLM Test Generation (GoPenAI)](https://blog.gopenai.com/multi-llm-test-automation-generate-cypress-and-playwright-tests-with-chatgpt-claude-or-gemini-04aedc297da1)
 - [GitHub: ai-natural-language-tests](https://github.com/aiqualitylab/ai-natural-language-tests)
-- [GitHub: self-healing-e2e-tests-prototype](https://github.com/agune15/self-healing-e2e-tests-prototype)
-- [Decipher x Claude Blog](https://getdecipher.com/blog/decipher-x-claude-let-claude-code-generate-self-maintaining-e2e-tests)
 - [Claude Code Sub-agents Docs](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 - [Claude Code GitHub Actions](https://docs.anthropic.com/en/docs/claude-code/github-actions)
 - [SmartScope: Claude Code + GitHub Actions](https://smartscope.blog/en/ai-development/github-actions-automated-testing-claude-code-2025/)
@@ -658,5 +458,4 @@ Add the Claude Code GitHub Action to PRs to automatically generate new Gherkin s
 - [GitHub: miroslavmyrha/cypress-mcp](https://github.com/miroslavmyrha/cypress-mcp)
 - [GitHub: yashpreetbathla/cypress-mcp](https://github.com/yashpreetbathla/cypress-mcp)
 - [GitHub: tjmaher/claude-cypress-login](https://github.com/tjmaher/claude-cypress-login)
-- [remarkablemark: cy.ai command](https://remarkablemark.medium.com/cypress-ai-command-30eadacc8e68)
 - [Claude Code Subagents (Dev.to)](https://dev.to/subprime2010/claude-code-subagents-how-to-run-parallel-tasks-without-hitting-rate-limits-4bpl)
