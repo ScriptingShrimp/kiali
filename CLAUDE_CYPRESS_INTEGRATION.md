@@ -290,59 +290,6 @@ The biggest challenge: a subagent assigned to `auth/` may modify shared `command
 
 ---
 
-## Approach 4: Community MCP Servers for Cypress (GitHub)
-
-**Sources:** [miroslavmyrha/cypress-mcp](https://github.com/miroslavmyrha/cypress-mcp), [yashpreetbathla/cypress-mcp](https://github.com/yashpreetbathla/cypress-mcp)
-
-### What It Is
-
-Community-built MCP servers that expose Cypress testing capabilities to Claude (and other MCP-compatible AI clients) — similar in concept to the official Cypress Cloud MCP, but focused on **local test execution and spec file access** rather than Cypress Cloud data.
-
-### Available Tools in Community MCP Servers
-
-| Tool | What It Does |
-|------|-------------|
-| `list_specs` | Lists all Cypress spec files in the project |
-| `read_spec` | Returns the content of a specific spec file |
-| `get_test_results` | Retrieves results from the most recent test run |
-| `run_spec` | Executes a specific spec file and returns results |
-| `get_dom_snapshot` | Returns the DOM snapshot from the last test run |
-| `get_command_log` | Returns the Cypress command log |
-| `get_error_messages` | Returns error messages from failed tests |
-
-### Use Cases
-
-- Claude reads spec files and identifies coverage gaps
-- Claude runs a spec, gets DOM snapshot + command log + errors, diagnoses failures inline
-- Claude proposes locator changes and immediately re-runs to verify the fix
-
-### Prompting Claude with Generation Rules via MCP
-
-When asking Claude to write or fix specs through the MCP server, include the generation rules in the prompt so output stays consistent:
-
-```
-Using the cypress-mcp tools, read the existing specs in cypress/e2e/features/auth/,
-identify any missing coverage, then generate additional Gherkin scenarios and step
-definitions. Apply these rules:
-- Generate positive, negative, and boundary value tests for each flow
-- Use data-cy selectors exclusively; never use CSS class selectors
-- Target 80%+ coverage of user-visible interactions
-- Use cy.intercept() for network stubbing; never use cy.wait(number)
-- Follow Page Object Model: page objects in cypress/support/pages/
-- Placeholders for secrets: use Cypress.env()
-- No bare cy.wait() — alias intercepts and use cy.wait('@alias')
-```
-
-### Tradeoffs
-
-| ✅ Pros | ⚠️ Cons |
-|---------|---------|
-| Works without Cypress Cloud | Community-maintained; stability not guaranteed |
-| Gives Claude access to local run data | Smaller feature set than official Cloud MCP |
-| Enables agentic fix-and-verify loops locally | Requires local MCP server setup |
-
----
-
 ## Summary Comparison Table
 
 | # | Approach | Who Makes It | Claude Needed? | Cypress Cloud Needed? | Best For |
@@ -350,7 +297,6 @@ definitions. Apply these rules:
 | 1 | **AGENTS.md / CLAUDE.md** | Community pattern | Yes | No | Encoding conventions for Claude Code |
 | 2 | **Multi-LLM Framework** | Open source | Yes (one option) | No | Model-agnostic spec generation from CLI |
 | 3 | **Claude Code Subagents** | Anthropic | Yes (Claude Code) | No | Parallelizing large-scale spec generation |
-| 4 | **Community MCP Servers** | Community | Yes | No | Local test run access for AI agents |
 
 ---
 
@@ -422,26 +368,111 @@ Example `cypress/AGENTS.md` content for Kiali:
 
 **What context engineering alone covers — and what it does not:**
 
-AGENTS.md files tell the agent *how the suite is structured*. They enable correct test authoring and prevent the agent from running destructive commands. They do not give the agent access to runtime failure data — for that, see Phase 2.
+AGENTS.md files tell the agent *how the suite is structured*. They enable correct test authoring and prevent the agent from running destructive commands. They do not give the agent access to runtime failure data — paste failure output directly into context for ad-hoc triage.
 
 | Goal | What delivers it |
 |------|-----------------|
 | Agent writes correct new Gherkin scenarios and step definitions | `cypress/AGENTS.md` with conventions |
-| Agent understands why a specific test failed | MCP server (Phase 2) or pasting failure output directly |
-| Agent fixes a broken `data-cy` selector | MCP + `cypress/AGENTS.md` together |
+| Agent understands why a specific test failed | Pasting failure output directly into context |
+| Agent fixes a broken `data-cy` selector | `cypress/AGENTS.md` conventions |
 | Agent identifies missing scenario coverage | `cypress/AGENTS.md` + asking it to read the feature files |
 
-### Phase 2: Claude Code + Community MCP Server for Local Failure Triage
-
-Context files tell Claude *where* things are; the MCP server tells Claude *what went wrong at runtime*. Use a community MCP server (`cypress-mcp`) to give Claude direct access to local test run data — spec content, command logs, DOM snapshots, and error messages — without needing Cypress Cloud. With both in place, Claude can read a failing spec, inspect the command log and DOM snapshot from the last run, diagnose the failure, and propose a fix in a tight loop — all without leaving the editor.
-
-### Phase 3: LLM-Powered Self-Healing for Selector Rot
+### Phase 2: LLM-Powered Self-Healing for Selector Rot
 
 Wire Claude Sonnet into the CI failure pipeline to automatically propose patches for broken selectors and open draft PRs for human review. This directly targets the most common maintenance pain point in Gherkin step definitions: selectors drifting as the UI evolves.
 
-### Phase 4: Claude Code Subagents for Bulk Generation (Optional)
+### Phase 3: Claude Code Subagents for Bulk Generation (Optional)
 
 Use Claude Code subagents (Approach 3) to generate Gherkin scenarios and step definitions for multiple feature domains in parallel — each subagent scoped to one feature file and its matching step definition file, following the conventions encoded in Phase 1. The 1:1 naming convention (`featureFiles/X.feature` ↔ `common/X.ts`) makes scope boundaries natural and reduces the risk of subagents conflicting over shared files.
+
+---
+
+### Complete Generation Workflow: Synthesizing All Approaches
+
+When the phases above are in place, use this structured workflow to generate new Gherkin scenarios and step definitions for any feature — without an external framework, but applying the same structured reasoning that makes Approach 2 effective.
+
+**The pipeline, adapted for direct use with Claude:**
+
+```
+Step 1: Read component source      (Claude reads the React component / page source)
+      ↓
+Step 2: Analyze stable selectors   (Claude identifies data-cy, aria-*, and text anchors in the source)
+      ↓
+Step 3: Check existing patterns    (Claude reads a similar existing .feature + step definition pair)
+      ↓
+Step 4: Generate the spec          (Claude writes the .feature + matching step definition)
+```
+
+All steps require only Phase 1 (AGENTS.md context) and can run without a live cluster.
+
+**Self-contained generation prompt**
+
+Use this prompt directly in Claude Code or Cursor. It encodes the conventions inline so it works even before AGENTS.md files exist in the repo.
+
+```
+You are writing Cypress/Gherkin tests for the Kiali observability UI.
+
+## Your task
+1. Read the component source at [path/to/component].
+2. Identify all `data-cy` attributes, `aria-label` values, and stable text anchors
+   in that source. Do not select by CSS class.
+3. Read the most similar existing feature file (e.g. cypress/integration/featureFiles/graph.feature)
+   and its step definitions (cypress/integration/common/graph.ts) to understand the established
+   pattern before writing anything.
+4. Generate:
+   - A new `.feature` file at `cypress/integration/featureFiles/<name>.feature`
+   - A matching step definition at `cypress/integration/common/<name>.ts`
+   following the same base-name convention as the existing pairs.
+
+## Generation rules (apply to all output)
+- Use `data-cy` attributes exclusively for element selection; never use CSS class selectors
+- Generate positive tests, negative tests, and boundary / edge cases for each flow
+- Use `cy.intercept()` with named aliases; never use `cy.wait(number)` or bare `cy.wait()`
+- Reference `Cypress.env()` for secrets or environment-specific values; never hardcode them
+- Organise scenarios with `@tag` annotations (e.g. `@auth`, `@graph`, `@table`)
+- Runner: `cypress-cucumber-preprocessor`
+  Single-feature run: `cypress run --spec "cypress/integration/featureFiles/<name>.feature"`
+- Do not read or modify anything under `cypress/perf/` — it uses a different runner
+  and is a separate concern
+
+## What to expect from Claude's output
+Claude adds assertions that are not explicitly requested: for example, asserting that an
+error message disappears after a successful action, or asserting intermediate loading states.
+Keep these in review — they reflect a complete view of the user flow, not noise.
+```
+
+**Pattern consistency — lightweight alternative to a vector store**
+
+Approach 2's vector store (step 3 in the pipeline) keeps generated output consistent across multiple generation runs by surfacing past specs as reference material. You can achieve the same effect without infrastructure by maintaining a small set of canonical reference specs:
+
+```
+cypress/integration/featureFiles/
+└── _examples/
+    ├── auth.feature       ← canonical example: authentication flow
+    ├── graph.feature      ← canonical example: graph interaction
+    └── table.feature      ← canonical example: sortable / filterable table
+```
+
+Add one line to `cypress/AGENTS.md`:
+
+```markdown
+### Reference Examples
+Before generating a new spec, read the closest example in `cypress/integration/featureFiles/_examples/`
+and match its structure, tag style, and step definition patterns.
+```
+
+This costs nothing at runtime and keeps generated specs structurally consistent without an external vector store or Python dependency.
+
+**What each phase and approach contributes to this workflow**
+
+| Step | What delivers it |
+|------|-----------------|
+| Read component source | Claude Code (built-in file access) |
+| Identify stable selectors | Claude's analysis pass — guided by `cypress/AGENTS.md` selector rules (Phase 1) |
+| Check existing patterns | Reference examples in `_examples/` — lightweight pattern history (Phase 1) |
+| Generate spec + step definition | Claude — guided by the self-contained prompt above |
+| Fix selector rot automatically | Phase 2: Self-healing pipeline |
+| Generate at scale across domains | Phase 3: Claude Code subagents, one per feature file |
 
 ---
 
@@ -451,7 +482,5 @@ Use Claude Code subagents (Approach 3) to generate Gherkin scenarios and step de
 - [Multi-LLM Test Generation (GoPenAI)](https://blog.gopenai.com/multi-llm-test-automation-generate-cypress-and-playwright-tests-with-chatgpt-claude-or-gemini-04aedc297da1)
 - [GitHub: ai-natural-language-tests](https://github.com/aiqualitylab/ai-natural-language-tests)
 - [Claude Code Sub-agents Docs](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
-- [GitHub: miroslavmyrha/cypress-mcp](https://github.com/miroslavmyrha/cypress-mcp)
-- [GitHub: yashpreetbathla/cypress-mcp](https://github.com/yashpreetbathla/cypress-mcp)
 - [GitHub: tjmaher/claude-cypress-login](https://github.com/tjmaher/claude-cypress-login)
 - [Claude Code Subagents (Dev.to)](https://dev.to/subprime2010/claude-code-subagents-how-to-run-parallel-tasks-without-hitting-rate-limits-4bpl)
