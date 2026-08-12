@@ -124,8 +124,7 @@ export class IstioConfigPage extends BasePage {
   }
 
   async showMoreFilters(): Promise<void> {
-    // PF LabelGroup overflow control (e.g. "+1"); Cypress uses the same class selector in label_check.ts.
-    await this.filterSelection().locator('button.pf-v6-c-label.pf-m-overflow').click();
+    await this.filterSelection().getByRole('button').filter({ hasText: '+' }).click();
   }
 
   async clickShowLess(): Promise<void> {
