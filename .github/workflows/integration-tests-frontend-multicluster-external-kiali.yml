@@ -3,6 +3,11 @@ name: Integration Tests Frontend External Kiali
 on:
   workflow_call:
     inputs:
+      run_suffix:
+        description: "Suffix appended to artifact names. Retry callers set this (e.g. '-retry') to avoid duplicate artifact names within the same run."
+        required: false
+        type: string
+        default: ""
       target_branch:
         required: true
         type: string
@@ -89,7 +94,7 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       continue-on-error: true
       with:
-        name: resource-telemetry-frontend-mc-ext-kiali
+        name: resource-telemetry-frontend-mc-ext-kiali${{ inputs.run_suffix }}
         path: /tmp/ci-telemetry-frontend-mc-ext-kiali.csv
         retention-days: 14
         if-no-files-found: ignore
@@ -104,12 +109,12 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: debug-info-frontend-mc-ext-kiali
+        name: debug-info-frontend-mc-ext-kiali${{ inputs.run_suffix }}
         path: debug-output
 
     - name: Upload cypress screenshots when tests fail
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: failure()
       with:
-        name: cypress-screenshots-frontend-mc-ext-kiali
+        name: cypress-screenshots-frontend-mc-ext-kiali${{ inputs.run_suffix }}
         path: frontend/cypress/screenshots

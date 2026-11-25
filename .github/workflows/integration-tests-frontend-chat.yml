@@ -3,6 +3,11 @@ name: Integration Tests Frontend Chat
 on:
   workflow_call:
     inputs:
+      run_suffix:
+        description: "Suffix appended to artifact names. Retry callers set this (e.g. '-retry') to avoid duplicate artifact names within the same run."
+        required: false
+        type: string
+        default: ""
       target_branch:
         required: true
         type: string
@@ -80,7 +85,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: junit-frontend-chat-report
+        name: junit-frontend-chat-report${{ inputs.run_suffix }}
         path: frontend/cypress/results/combined-report.xml
         if-no-files-found: warn
 
@@ -94,7 +99,7 @@ jobs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       continue-on-error: true
       with:
-        name: resource-telemetry-frontend-chat
+        name: resource-telemetry-frontend-chat${{ inputs.run_suffix }}
         path: /tmp/ci-telemetry-frontend-chat.csv
         retention-days: 14
         if-no-files-found: ignore
@@ -109,19 +114,19 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: debug-info-frontend-chat
+        name: debug-info-frontend-chat${{ inputs.run_suffix }}
         path: debug-output
 
     - name: Upload cypress screenshots when tests fail
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: failure()
       with:
-        name: cypress-screenshots-frontend-chat
+        name: cypress-screenshots-frontend-chat${{ inputs.run_suffix }}
         path: frontend/cypress/screenshots
 
     - name: Upload cypress logs from stern
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: ${{ inputs.stern_logs == true }}
       with:
-        name: cypress-logs-frontend-chat
+        name: cypress-logs-frontend-chat${{ inputs.run_suffix }}
         path: hack/stern

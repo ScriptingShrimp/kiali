@@ -1,0 +1,152 @@
+# Weekly scheduled CI for all supported release branches (issue #9042, Phase 2).
+#
+# This coordinator dispatches one test-supported-branch.yml run per supported
+# branch (via the GitHub API, always against master so the coordinator and
+# dispatched workflow logic stays current), waits for all dispatched runs to
+# complete, and fails if any of them failed - so the standard GitHub Actions
+# failure notifications fire on the scheduled run maintainers watch.
+#
+# Design notes (see ISSUE-9042-PLAN.md and review-of-the-issue.md):
+# - One workflow run per branch: artifacts are scoped per run and the
+#   reusable workflows upload under fixed names, so a shared matrix would
+#   collide artifact names and race artifact downloads across branches.
+# - master is not tested here: the 02:00/04:00/06:00 UTC dailies cover it.
+# - The dispatched runs are dispatched all at once; the repo-wide concurrent
+#   job limit naturally batches them. Each dispatched run is ~17 jobs, so
+#   five-to-six runs queue behind each other over a few hours.
+# - The cron slot (Monday 08:00 UTC, after the 06:00 UTC daily has finished)
+#   is a starting point: measure one real run before changing it, and keep
+#   the weekly Actions-minutes cost (~5-6x one daily run) in mind.
+# - Notifications: standard GitHub Actions failure notifications only. A
+#   failed branch run should get a card on the Kiali project board at triage
+#   time, assigned by whoever sees it first (same rota as daily CI failures).
+
+name: Test Supported Branches
+
+on:
+  schedule:
+  # These are in UTC time. Weekly, Monday 08:00 UTC.
+  - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "branch: A single supported branch to test. Empty means all supported branches."
+        required: false
+        default: ""
+        type: string
+
+permissions: read-all
+
+concurrency:
+  group: test-supported-branches
+  cancel-in-progress: false
+
+run-name: "Supported branches CI - ${{ inputs.branch || 'all' }}"
+
+env:
+  # The supported release branches. Keep this list in sync with the branch
+  # validation in test-supported-branch.yml. When a branch goes EOL, remove
+  # it from both files in the same PR that documents the EOL.
+  SUPPORTED_BRANCHES: v2.4 v2.11 v2.17 v2.22 v2.27 v2.33
+
+jobs:
+  dispatch_and_summarize:
+    name: Dispatch branch runs and summarize results
+    permissions:
+      # Required to dispatch workflow runs via the GitHub API.
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Determine branches to test
+      run: |
+        if [ -n "${{ inputs.branch }}" ]; then
+          if ! echo "${{ inputs.branch }}" | grep -qxE "^(${SUPPORTED_BRANCHES// /|})$"; then
+            echo "ERROR: Branch [${{ inputs.branch }}] is not a supported release branch."
+            echo "Supported branches: ${SUPPORTED_BRANCHES}"
+            exit 1
+          fi
+          BRANCHES="${{ inputs.branch }}"
+        else
+          BRANCHES="${SUPPORTED_BRANCHES}"
+        fi
+        echo "BRANCHES=${BRANCHES}" | tee -a "$GITHUB_ENV"
+
+    - name: Dispatch one run per branch
+      run: |
+        STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        echo "STARTED_AT=${STARTED_AT}" | tee -a "$GITHUB_ENV"
+        for BRANCH in ${BRANCHES}; do
+          echo "Dispatching test-supported-branch.yml for [${BRANCH}]"
+          gh workflow run test-supported-branch.yml --ref master -f branch="${BRANCH}"
+        done
+
+    - name: Collect dispatched run IDs
+      run: |
+        : > run-ids.txt
+        for BRANCH in ${BRANCHES}; do
+          RUN_ID=""
+          # Dispatching is asynchronous; the run may take a moment to appear.
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list --workflow=test-supported-branch.yml \
+              --json databaseId,displayTitle,createdAt \
+              --jq ".[] | select(.displayTitle == \"Supported branch CI - ${BRANCH}\" and .createdAt > \"${STARTED_AT}\") | .databaseId" \
+              | head -n 1)
+            [ -n "${RUN_ID}" ] && break
+            sleep 10
+          done
+          if [ -z "${RUN_ID}" ]; then
+            echo "ERROR: could not find the dispatched run for [${BRANCH}]" >&2
+            exit 1
+          fi
+          echo "${BRANCH} ${RUN_ID}" >> run-ids.txt
+          echo "Branch [${BRANCH}] -> run ${RUN_ID}"
+        done
+
+    - name: Wait for all dispatched runs to complete
+      run: |
+        # Keep this comfortably below the job timeout-minutes above.
+        DEADLINE=$(( $(date +%s) + 330 * 60 ))
+        while true; do
+          PENDING=0
+          while read -r BRANCH RUN_ID; do
+            STATUS=$(gh run view "${RUN_ID}" --json status --jq .status)
+            echo "Branch [${BRANCH}] run ${RUN_ID}: ${STATUS}"
+            if [ "${STATUS}" != "completed" ]; then
+              PENDING=$((PENDING + 1))
+            fi
+          done < run-ids.txt
+          if [ "${PENDING}" -eq 0 ]; then
+            break
+          fi
+          if [ "$(date +%s)" -gt "${DEADLINE}" ]; then
+            echo "ERROR: timed out waiting for ${PENDING} dispatched run(s); see the dispatched runs directly." >&2
+            exit 1
+          fi
+          echo "Waiting for ${PENDING} run(s) to complete; sleeping 2 minutes..."
+          sleep 120
+        done
+
+    - name: Summarize results
+      run: |
+        FAILED=0
+        {
+          echo "## Supported branches CI results"
+          echo
+          echo "| Branch | Result | Run |"
+          echo "|---|---|---|"
+          while read -r BRANCH RUN_ID; do
+            CONCLUSION=$(gh run view "${RUN_ID}" --json conclusion --jq .conclusion)
+            if [ "${CONCLUSION}" != "success" ]; then
+              FAILED=1
+            fi
+            echo "| ${BRANCH} | ${CONCLUSION} | [run ${RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}) |"
+          done < run-ids.txt
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+        if [ "${FAILED}" -ne 0 ]; then
+          echo "At least one supported branch is red; see the summary table." >&2
+        fi
+        exit "${FAILED}"

@@ -1,0 +1,354 @@
+# Test a single supported release branch (issue #9042, Phase 2).
+#
+# This workflow is normally dispatched by test-supported-branches.yml (the
+# weekly coordinator) but can also be dispatched manually for targeted
+# debugging of one branch.
+#
+# Design notes (see ISSUE-9042-PLAN.md and review-of-the-issue.md):
+# - One workflow run per branch: artifacts are scoped per run and the
+#   reusable workflows upload under fixed names, so branches must not share
+#   a run (artifact namespace collisions / download races).
+# - Each suite job is gated on the branches whose hack/run-integration-tests.sh
+#   supports that suite and its flags. Old branch scripts hard-fail on
+#   master-era flags (e.g. --stern on v2.4/v2.11, --waypoint on v2.17).
+# - istio_version and sail_operator_git_ref are intentionally NOT passed:
+#   each branch's own setup-kind-in-ci.sh resolves its pinned Istio version.
+# - The ambient suite runs unconditionally: every supported branch resolves
+#   to Istio >= 1.23 and the initialize-time version gate of the daily
+#   workflow does not exist here.
+# - The frontend suite is the unsplit one (--test-suite frontend), matching
+#   the daily pattern; old branches do not all know the core-1/2 splits.
+# - A failed suite is retried exactly once, in a separate fresh job with a
+#   fresh cluster, with artifact names suffixed via run_suffix to avoid
+#   duplicate artifact names within this run.
+# - master is not tested here: the 02:00/04:00/06:00 UTC dailies cover it.
+
+name: Test Supported Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "branch: The supported release branch to build and test."
+        required: true
+        type: string
+
+permissions: read-all
+
+concurrency:
+  group: test-supported-branch-${{ inputs.branch }}
+  cancel-in-progress: false
+
+run-name: "Supported branch CI - ${{ inputs.branch }}"
+
+jobs:
+  initialize:
+    permissions:
+      contents: read
+    name: Initialize
+    runs-on: ubuntu-latest
+    outputs:
+      target-branch: ${{ inputs.branch }}
+      build-branch: ${{ inputs.branch }}
+    steps:
+    # Keep this list in sync with SUPPORTED_BRANCHES in
+    # test-supported-branches.yml. When a branch goes EOL, remove it from
+    # both files in the same PR.
+    - name: Validate branch
+      run: |
+        case "${{ inputs.branch }}" in
+          v2.4|v2.11|v2.17|v2.22|v2.27|v2.33)
+            echo "Branch [${{ inputs.branch }}] is supported."
+            ;;
+          *)
+            echo "ERROR: Branch [${{ inputs.branch }}] is not a supported release branch."
+            echo "Supported branches: v2.4 v2.11 v2.17 v2.22 v2.27 v2.33"
+            exit 1
+            ;;
+        esac
+    - run: echo "target-branch -> ${{ inputs.branch }}"
+    - run: echo "build-branch -> ${{ inputs.branch }}"
+
+  test_backend:
+    name: Run backend linters and unit tests
+    uses: ./.github/workflows/test-lint-backend.yml
+    needs: [initialize]
+    with:
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  build_frontend:
+    name: Build frontend
+    uses: ./.github/workflows/build-frontend.yml
+    needs: [initialize]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  build_backend:
+    name: Build backend
+    uses: ./.github/workflows/build-backend.yml
+    needs: [initialize, test_backend, build_frontend]
+    with:
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  # ---------------------------------------------------------------------------
+  # Suites supported by every supported branch (no master-era-only flags).
+  # ---------------------------------------------------------------------------
+
+  integration_tests_backend:
+    name: Run backend integration tests
+    uses: ./.github/workflows/integration-tests-backend.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_backend_retry:
+    name: Run backend integration tests (retry)
+    uses: ./.github/workflows/integration-tests-backend.yml
+    needs: [initialize, integration_tests_backend]
+    if: always() && needs.integration_tests_backend.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_backend_multicluster_external_controlplane:
+    name: Run backend multicluster external-controlplane integration tests
+    uses: ./.github/workflows/integration-tests-backend-multicluster-external-controlplane.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_backend_multicluster_external_controlplane_retry:
+    name: Run backend multicluster external-controlplane integration tests (retry)
+    uses: ./.github/workflows/integration-tests-backend-multicluster-external-controlplane.yml
+    needs: [initialize, integration_tests_backend_multicluster_external_controlplane]
+    if: always() && needs.integration_tests_backend_multicluster_external_controlplane.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_multicluster_primary_remote:
+    name: Run frontend multicluster primary-remote integration tests
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-primary-remote.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_multicluster_primary_remote_retry:
+    name: Run frontend multicluster primary-remote integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-primary-remote.yml
+    needs: [initialize, integration_tests_frontend_multicluster_primary_remote]
+    if: always() && needs.integration_tests_frontend_multicluster_primary_remote.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_multicluster_multi_primary:
+    name: Run frontend multicluster multi-primary integration tests
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-multi-primary.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_multicluster_multi_primary_retry:
+    name: Run frontend multicluster multi-primary integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-multi-primary.yml
+    needs: [initialize, integration_tests_frontend_multicluster_multi_primary]
+    if: always() && needs.integration_tests_frontend_multicluster_multi_primary.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  # The ambient suite runs unconditionally: all supported branches resolve to
+  # Istio >= 1.23 (see design notes at the top of this file).
+  integration_tests_frontend_ambient:
+    name: Run Ambient frontend integration tests
+    uses: ./.github/workflows/integration-tests-frontend-ambient.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_ambient_retry:
+    name: Run Ambient frontend integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-ambient.yml
+    needs: [initialize, integration_tests_frontend_ambient]
+    if: always() && needs.integration_tests_frontend_ambient.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_tempo:
+    name: Run tracing frontend integration tests
+    uses: ./.github/workflows/integration-tests-frontend-tempo.yml
+    needs: [initialize, build_backend]
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_tempo_retry:
+    name: Run tracing frontend integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-tempo.yml
+    needs: [initialize, integration_tests_frontend_tempo]
+    if: always() && needs.integration_tests_frontend_tempo.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  # ---------------------------------------------------------------------------
+  # Suites introduced with v2.17: the frontend workflow passes --stern, and
+  # the local/offline and external-kiali suites do not exist on v2.4/v2.11.
+  # ---------------------------------------------------------------------------
+
+  integration_tests_frontend:
+    name: Run frontend integration tests
+    uses: ./.github/workflows/integration-tests-frontend.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.17", "v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_retry:
+    name: Run frontend integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend.yml
+    needs: [initialize, integration_tests_frontend]
+    if: always() && needs.integration_tests_frontend.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_local_offline:
+    name: Run frontend local and offline mode integration tests
+    uses: ./.github/workflows/integration-tests-frontend-local-offline.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.17", "v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_local_offline_retry:
+    name: Run frontend local and offline mode integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-local-offline.yml
+    needs: [initialize, integration_tests_frontend_local_offline]
+    if: always() && needs.integration_tests_frontend_local_offline.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_multicluster_external_kiali:
+    name: Run frontend multicluster external-kiali integration tests
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-external-kiali.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.17", "v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_multicluster_external_kiali_retry:
+    name: Run frontend multicluster external-kiali integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-multicluster-external-kiali.yml
+    needs: [initialize, integration_tests_frontend_multicluster_external_kiali]
+    if: always() && needs.integration_tests_frontend_multicluster_external_kiali.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  # ---------------------------------------------------------------------------
+  # Suites/flags introduced with v2.22: --mcp-tools, --waypoint and the
+  # frontend-multi-mesh suite do not exist on v2.4/v2.11/v2.17.
+  # ---------------------------------------------------------------------------
+
+  integration_tests_backend_mcp:
+    name: Run backend MCP integration tests
+    uses: ./.github/workflows/integration-tests-backend-mcp.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_backend_mcp_retry:
+    name: Run backend MCP integration tests (retry)
+    uses: ./.github/workflows/integration-tests-backend-mcp.yml
+    needs: [initialize, integration_tests_backend_mcp]
+    if: always() && needs.integration_tests_backend_mcp.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_ambient_multi_primary:
+    name: Run frontend Ambient Multi-Primary integration tests
+    uses: ./.github/workflows/integration-tests-frontend-ambient-multi-primary.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_ambient_multi_primary_retry:
+    name: Run frontend Ambient Multi-Primary integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-ambient-multi-primary.yml
+    needs: [initialize, integration_tests_frontend_ambient_multi_primary]
+    if: always() && needs.integration_tests_frontend_ambient_multi_primary.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  integration_tests_frontend_multi_mesh:
+    name: Run frontend multi mesh integration tests
+    uses: ./.github/workflows/integration-tests-frontend-multi-mesh.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.22", "v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_multi_mesh_retry:
+    name: Run frontend multi mesh integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-multi-mesh.yml
+    needs: [initialize, integration_tests_frontend_multi_mesh]
+    if: always() && needs.integration_tests_frontend_multi_mesh.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
+
+  # ---------------------------------------------------------------------------
+  # Suites introduced with v2.27: the ai-chatbot suite does not exist on
+  # v2.4/v2.11/v2.17/v2.22.
+  # ---------------------------------------------------------------------------
+
+  integration_tests_frontend_chat:
+    name: Run frontend AI integration tests
+    uses: ./.github/workflows/integration-tests-frontend-chat.yml
+    needs: [initialize, build_backend]
+    if: contains(fromJSON('["v2.27", "v2.33"]'), inputs.branch)
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+
+  integration_tests_frontend_chat_retry:
+    name: Run frontend AI integration tests (retry)
+    uses: ./.github/workflows/integration-tests-frontend-chat.yml
+    needs: [initialize, integration_tests_frontend_chat]
+    if: always() && needs.integration_tests_frontend_chat.result == 'failure'
+    with:
+      target_branch: ${{ needs.initialize.outputs.target-branch }}
+      build_branch: ${{ needs.initialize.outputs.build-branch }}
+      run_suffix: "-retry"
